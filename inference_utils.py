@@ -314,7 +314,7 @@ def draw_sketches(drawing_spec,lip_dist_idx,input_vid_len,face_crop_results,all_
 
 def prepare_output_stream(ori_background_frames,temp_dir,mel_chunks,input_vid_len,fps):
     frame_h, frame_w = ori_background_frames[0].shape[:-1]
-    out_stream = cv2.VideoWriter('{}/result.avi'.format(temp_dir), cv2.VideoWriter_fourcc(*'DIVX'), fps,
+    out_stream = cv2.VideoWriter('{}/result.mp4'.format(temp_dir), cv2.VideoWriter_fourcc(*'avc1'), fps,
                                 (frame_w, frame_h))  # +frame_h*3
 
 
@@ -446,7 +446,7 @@ def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, in
 
 
     out_stream.release()
-    command = 'ffmpeg -y -i {} -i {} -strict -2 -q:v 1 {}'.format(input_audio_path, '{}/result.avi'.format(temp_dir), outfile_path)
+    command = 'ffmpeg -y -i {} -i {} -strict -2 -q:v 1 {}'.format(input_audio_path, '{}/result.mp4'.format(temp_dir), outfile_path)
     subprocess.call(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     print("succeed output results to:", outfile_path)
     print('{}/result.avi'.format(temp_dir))
