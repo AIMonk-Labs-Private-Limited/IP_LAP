@@ -449,7 +449,7 @@ def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, in
     command = 'ffmpeg -y -i {} -i {} -strict -2 -q:v 1 {}'.format(input_audio_path, '{}/result.mp4'.format(temp_dir), outfile_path)
     subprocess.call(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     print("succeed output results to:", outfile_path)
-    print('{}/result.avi'.format(temp_dir))
+    print('{}/result.mp4'.format(temp_dir))
     print(input_audio_path)
     return outfile_path
 

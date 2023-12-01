@@ -20,8 +20,8 @@ parser.add_argument('--audio', type=str, default='./test/template_video/audio2.w
 #'./test/template_video/audio2.wav'
 parser.add_argument('--output_dir', type=str, default='./test_result')
 parser.add_argument('--static', type=bool, help='whether only use  the first frame for inference', default=False)
-parser.add_argument('--landmark_gen_checkpoint_path', type=str, default='./test/checkpoints/landmarkgenerator_checkpoint.pth')
-parser.add_argument('--renderer_checkpoint_path', type=str, default='./test/checkpoints/renderer_checkpoint.pth')
+parser.add_argument('--landmark_gen_checkpoint_path', type=str, default='../checkpoints/landmarkgenerator_checkpoint.pth')
+parser.add_argument('--renderer_checkpoint_path', type=str, default='../checkpoints/renderer_checkpoint.pth')
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 args = parser.parse_args()
 
