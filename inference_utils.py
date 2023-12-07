@@ -9,7 +9,18 @@ from tqdm import tqdm
 from global_variable import *
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+from pathlib import Path
 
+
+from gfpgan import GFPGANer
+
+
+GFPGAN_CKPT_PATH = os.path.join(
+    # path to the dir that contains checkpoint dir
+    str(Path(os.path.dirname(os.path.abspath(__file__))).parent),
+    "checkpoints"
+)
+print(GFPGAN_CKPT_PATH)
 class LandmarkDict(dict):# Makes a dictionary that behave like an object to represent each landmark
     def __init__(self, idx, x, y):
         self['idx'] = idx
@@ -329,10 +340,75 @@ def prepare_output_stream(ori_background_frames,temp_dir,mel_chunks,input_vid_le
 
     return frame_h,frame_w,out_stream,input_mel_chunks_len,input_frame_sequence
 
+def define_enhancer(method,bg_upsampler=None):
+    print('face enhancer....')
+    # ------------------------ set up GFPGAN restorer ------------------------
+    if  method == 'gfpgan':
+        arch = 'clean'
+        channel_multiplier = 2
+        model_name = 'GFPGANv1.4'
+        url = 'https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth'
+    elif method == 'RestoreFormer':
+        arch = 'RestoreFormer'
+        channel_multiplier = 2
+        model_name = 'RestoreFormer'
+        url = 'https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/RestoreFormer.pth'
+    elif method == 'codeformer': # TODO:
+        arch = 'CodeFormer'
+        channel_multiplier = 2
+        model_name = 'CodeFormer'
+        url = 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth'
+    else:
+        raise ValueError(f'Wrong model version {method}.')
+    
+    # ------------------------ set up background upsampler ------------------------
+    if bg_upsampler == 'realesrgan':
+        if not torch.cuda.is_available():  # CPU
+            import warnings
+            warnings.warn('The unoptimized RealESRGAN is slow on CPU. We do not use it. '
+                          'If you really want to use it, please modify the corresponding codes.')
+            bg_upsampler = None
+        else:
+            from basicsr.archs.rrdbnet_arch import RRDBNet
+            from realesrgan import RealESRGANer
+            model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=2)
+            bg_upsampler = RealESRGANer(
+                scale=2,
+                model_path='https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth',
+                model=model,
+                tile=400,
+                tile_pad=10,
+                pre_pad=0,
+                half=True)  # need to set False in CPU mode
+    else:
+        bg_upsampler = None
+        
+    # determine model paths
+    # determine model paths
+    model_path = os.path.join(GFPGAN_CKPT_PATH, model_name + '.pth')
+     
+    if not os.path.isfile(model_path):
+        model_path = os.path.join('checkpoints', model_name + '.pth')
+        
+    if not os.path.isfile(model_path):
+        # download pre-trained models from url
+        model_path = url
+    
+    restorer = GFPGANer(
+        model_path=model_path,
+        upscale=1,
+        arch=arch,
+        channel_multiplier=channel_multiplier,
+        bg_upsampler=bg_upsampler)   
+    
+    return restorer
+
 def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, input_mel_chunks_len, mel_chunks,
                  input_frame_sequence, face_crop_results, all_pose_landmarks, ori_background_frames,
                  frame_w, frame_h, ref_imgs, ref_img_sketches, out_stream, input_audio_path,
                  outfile_path, Nl_content, Nl_pose):
+    # import pdb;pdb.set_trace()
+    restorer=define_enhancer(method='gfpgan')
     for batch_idx, batch_start_idx in tqdm(enumerate(range(0, input_mel_chunks_len - 2, 1)),total=len(range(0, input_mel_chunks_len - 2, 1))):
         # preprocessing_st = time.time()
         T_input_frame, T_ori_face_coordinates = [], []
@@ -433,6 +509,9 @@ def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, in
         T_input_frame[2][y1:y2, x1:x2] = cv2.resize(gen_face,(x2 - x1, y2 - y1))  #resize and paste generated face
         # 5. post-process
         full = merge_face_contour_only(original_background, T_input_frame[2], T_ori_face_coordinates[2][1],fa)   #(H,W,3)
+        # 5.1 face enhancer
+        _,_,full=restorer.enhance(full, has_aligned=False, only_center_face=False,paste_back=True)
+        # full=cv2.cvtColor(full, cv2.COLOR_BGR2RGB)
         # 6.output
         out_stream.write(full)
         if batch_idx == 0:

@@ -12,6 +12,18 @@ import mediapipe as mp
 from global_variable import *
 from inference_utils import *
 
+# from gfpgan import GFPGANer
+from pathlib import Path
+
+import sys
+# GFPGAN_CKPT_PATH = os.path.join(
+#     # path to the dir that contains checkpoint dir
+#     str(Path(os.path.dirname(os.path.abspath(__file__))).parent.parent.parent),
+#     "sadtalker/1/checkpoints"
+# )
+# BG_REMOVAL_PACKAGE_PATH = os.path.join(str(Path(os.path.dirname(os.path.abspath(__file__))).parent), "bgremoval_package")
+# sys.path.append(BG_REMOVAL_PACKAGE_PATH)
+from bgremoval_package.demo.run import matting
 
 
 class IPLAP_tritoninference:
@@ -40,7 +52,7 @@ class IPLAP_tritoninference:
         self.renderer = load_model(model=Renderer(), path=renderer_checkpoint_path)
 
     
-    def infer(self,input_video_path,input_audio_path,temp_dir):
+    def infer(self,input_video_path,input_audio_path,temp_dir,bgremoval):
 
         # result_out_dir = os.path.dirname(temp_dir)
         # import pdb;pdb.set_trace()
@@ -75,8 +87,15 @@ class IPLAP_tritoninference:
             frame_w, frame_h, ref_imgs, ref_img_sketches, out_stream, input_audio_path,
             outfile_path, Nl_content, Nl_pose
         )
-
-        return outfile_path
+        # import pdb;pdb.set_trace()
+        if bgremoval:
+            output_path=os.path.join(temp_dir,"matts")
+            os.makedirs(output_path,exist_ok=True)
+            matting(outfile_path,output_path)
+            
+            return output_path
+        else:
+            return outfile_path
 
 
 
