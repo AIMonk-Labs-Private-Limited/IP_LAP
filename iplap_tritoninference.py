@@ -12,8 +12,20 @@ import mediapipe as mp
 from global_variable import *
 from inference_utils import *
 
+# from gfpgan import GFPGANer
+from pathlib import Path
 
+import sys
+# GFPGAN_CKPT_PATH = os.path.join(
+#     # path to the dir that contains checkpoint dir
+#     str(Path(os.path.dirname(os.path.abspath(__file__))).parent.parent.parent),
+#     "sadtalker/1/checkpoints"
+# )
+# BG_REMOVAL_PACKAGE_PATH = os.path.join(str(Path(os.path.dirname(os.path.abspath(__file__))).parent), "bgremoval_package")
+# sys.path.append(BG_REMOVAL_PACKAGE_PATH)
+from bgremoval_package.demo.run import matting
 
+from bgremoval_package.demo.run import load_model as load_model_modenet
 class IPLAP_tritoninference:
     
     def __init__(self,landmark_gen_checkpoint_path,renderer_checkpoint_path):
@@ -38,9 +50,10 @@ class IPLAP_tritoninference:
             model=Landmark_transformer(T=T, d_model=512, nlayers=4, nhead=4, dim_feedforward=1024, dropout=0.1),
             path=landmark_gen_checkpoint_path)
         self.renderer = load_model(model=Renderer(), path=renderer_checkpoint_path)
-
+        self.gfpgan=define_enhancer(method='gfpgan')
+        self.modnet=load_model_modenet()
     
-    def infer(self,input_video_path,input_audio_path,temp_dir):
+    def infer(self,input_video_path,input_audio_path,temp_dir,bgremoval):
 
         # result_out_dir = os.path.dirname(temp_dir)
         # import pdb;pdb.set_trace()
@@ -73,10 +86,23 @@ class IPLAP_tritoninference:
             self.landmark_generator_model, self.renderer, self.drawing_spec, self.fa,temp_dir, input_mel_chunks_len, mel_chunks,
             input_frame_sequence, face_crop_results, all_pose_landmarks, ori_background_frames,
             frame_w, frame_h, ref_imgs, ref_img_sketches, out_stream, input_audio_path,
-            outfile_path, Nl_content, Nl_pose
+            outfile_path, Nl_content, Nl_pose,self.gfpgan
         )
-
-        return outfile_path
+        # outfile_path =render_loop(
+        #     self.landmark_generator_model, self.renderer, self.drawing_spec, self.fa,temp_dir, input_mel_chunks_len, mel_chunks,
+        #     input_frame_sequence, face_crop_results, all_pose_landmarks, ori_background_frames,
+        #     frame_w, frame_h, ref_imgs, ref_img_sketches, out_stream, input_audio_path,
+        #     outfile_path, Nl_content, Nl_pose,self.gfpgan,
+        # )
+        # import pdb;pdb.set_trace()
+        if bgremoval:
+            output_path=os.path.join(temp_dir,"matts")
+            os.makedirs(output_path,exist_ok=True)
+            matting(outfile_path,output_path,self.modnet)
+            
+            return output_path
+        else:
+            return outfile_path
 
 
 
