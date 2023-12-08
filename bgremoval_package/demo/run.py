@@ -94,9 +94,9 @@ def matting_list(video,output_folder):
         cv2.imwrite(output_path, four_channel_frame)
 
 
-def matting(video,output_folder, alpha_matte=False, fps=25):
+def matting(video,output_folder,modnet, alpha_matte=False, fps=25):
     # video capture
-    modnet = load_model()
+    # modnet = load_model()
     vc = cv2.VideoCapture(video)
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)

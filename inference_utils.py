@@ -406,9 +406,9 @@ def define_enhancer(method,bg_upsampler=None):
 def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, input_mel_chunks_len, mel_chunks,
                  input_frame_sequence, face_crop_results, all_pose_landmarks, ori_background_frames,
                  frame_w, frame_h, ref_imgs, ref_img_sketches, out_stream, input_audio_path,
-                 outfile_path, Nl_content, Nl_pose):
+                 outfile_path, Nl_content, Nl_pose,restorer):
     # import pdb;pdb.set_trace()
-    restorer=define_enhancer(method='gfpgan')
+    # restorer=define_enhancer(method='gfpgan')
     for batch_idx, batch_start_idx in tqdm(enumerate(range(0, input_mel_chunks_len - 2, 1)),total=len(range(0, input_mel_chunks_len - 2, 1))):
         # preprocessing_st = time.time()
         T_input_frame, T_ori_face_coordinates = [], []
