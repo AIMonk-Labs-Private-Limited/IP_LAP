@@ -108,7 +108,7 @@ def reading(input_video_path,input_audio_path,temp_dir):
         fps = video_stream.get(cv2.CAP_PROP_FPS)
         if fps != 25:
             print(" input video fps:", fps,',converting to 25fps...')
-            command = 'ffmpeg -y -i ' + input_video_path + ' -r 25 ' + '{}/temp_25fps.avi'.format(temp_dir)
+            command = 'ffmpeg -y -i ' + input_video_path + ' -b:v 10M -r 25 ' + '{}/temp_25fps.avi'.format(temp_dir)
             subprocess.call(command, shell=True)
             input_video_path = '{}/temp_25fps.avi'.format(temp_dir)
             video_stream.release()
@@ -458,9 +458,6 @@ def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, in
         # landmark_gen_time.append(landmark_gen_et - landmark_gen_st)
 
 
-
-
-
         #1.draw target sketch
         # target_sketches_st = time.time()
         T_target_sketches = []
@@ -525,7 +522,7 @@ def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, in
 
 
     out_stream.release()
-    command = 'ffmpeg -y -i {} -i {} -strict -2 -q:v 1 {}'.format(input_audio_path, '{}/result.avi'.format(temp_dir), outfile_path)
+    command = 'ffmpeg -y -i {} -i {} -b:v 10M -strict -2 -q:v 1 {}'.format(input_audio_path, '{}/result.avi'.format(temp_dir), outfile_path)
     subprocess.call(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     print("succeed output results to:", outfile_path)
     print('{}/result.avi'.format(temp_dir))
