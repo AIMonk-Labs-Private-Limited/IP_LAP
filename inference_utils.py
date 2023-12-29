@@ -12,8 +12,10 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 from pathlib import Path
 
 
-from gfpgan import GFPGANer
+# from gfpgan import GFPGANer
+from .Fast import FAST_GFGGaner
 
+import kornia
 
 GFPGAN_CKPT_PATH = os.path.join(
     # path to the dir that contains checkpoint dir
@@ -68,10 +70,16 @@ def swap_masked_region(target_img, src_img, mask): #function used in post-proces
     """From src_img crop masked region to replace corresponding masked region
     in target_img
     """  # swap_masked_region(src_frame, generated_frame, mask=mask_img)
-    mask_img = cv2.GaussianBlur(mask, (21, 21), 11)
+    print("Speed up swap masked region")
+    target_img=torch.tensor(target_img).to(device=device).permute(2,0,1).unsqueeze(0) ##speed up
+    src_img=torch.tensor(src_img).to(device=device).permute(2,0,1).unsqueeze(0) ##speed up
+    mask=torch.tensor(mask).to(device=device,dtype=torch.float32).permute(2,0,1).unsqueeze(0) ##speed up
+    gauss = kornia.filters.GaussianBlur2d((21, 21),(11,11)) ##speed up
+    mask_img=gauss(mask) ##speed up
     mask1 = mask_img / 255
-    mask1 = np.tile(np.expand_dims(mask1, axis=2), (1, 1, 3))
-    img = src_img * mask1 + target_img * (1 - mask1)
+    mask1= mask1.repeat(1,3,1,1) ##speed up
+    img = src_img * mask1 + target_img * (1 - mask1) 
+    img=img.squeeze(0).permute(1,2,0).detach().cpu().numpy() ##speed up
     return img.astype(np.uint8)
 
 def merge_face_contour_only(src_frame, generated_frame, face_region_coord, fa): #function used in post-process
@@ -394,21 +402,28 @@ def define_enhancer(method,bg_upsampler=None):
         # download pre-trained models from url
         model_path = url
     
-    restorer = GFPGANer(
+    # restorer = GFPGANer(
+    #     model_path=model_path,
+    #     upscale=1,
+    #     arch=arch,
+    #     channel_multiplier=channel_multiplier,
+    #     bg_upsampler=bg_upsampler)
+    fast_restorer=FAST_GFGGaner(
         model_path=model_path,
-        upscale=1,
+        upscale=2,
         arch=arch,
         channel_multiplier=channel_multiplier,
         bg_upsampler=bg_upsampler)   
     
-    return restorer
+    
+    return fast_restorer
 
 def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, input_mel_chunks_len, mel_chunks,
                  input_frame_sequence, face_crop_results, all_pose_landmarks, ori_background_frames,
                  frame_w, frame_h, ref_imgs, ref_img_sketches, out_stream, input_audio_path,
                  outfile_path, Nl_content, Nl_pose,restorer):
     # import pdb;pdb.set_trace()
-    # restorer=define_enhancer(method='gfpgan')
+    # fast_restorer=define_enhancer(method='gfpgan')
     for batch_idx, batch_start_idx in tqdm(enumerate(range(0, input_mel_chunks_len - 2, 1)),total=len(range(0, input_mel_chunks_len - 2, 1))):
         # preprocessing_st = time.time()
         T_input_frame, T_ori_face_coordinates = [], []
@@ -510,7 +525,15 @@ def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, in
         # 5. post-process
         full = merge_face_contour_only(original_background, T_input_frame[2], T_ori_face_coordinates[2][1],fa)   #(H,W,3)
         # 5.1 face enhancer
-        _,_,full=restorer.enhance(full, has_aligned=False, only_center_face=False,paste_back=True)
+         
+        # previous_image_size = full.shape[:2]
+        # fast_restorer.reset_retinaface_priors(previous_image_size)
+        # if images[idx].shape[:2] != previous_image_size:
+            # do reset priors here
+        #     fast_restorer.reset_retinaface_priors(images[idx].shape[:2])
+        #     previous_image_size = images[idx].shape[:2]
+        # _,_,full=fast_restorer.enhance(full, has_aligned=False, only_center_face=False,paste_back=True)
+        
         # full=cv2.cvtColor(full, cv2.COLOR_BGR2RGB)
         # 6.output
         out_stream.write(full)
