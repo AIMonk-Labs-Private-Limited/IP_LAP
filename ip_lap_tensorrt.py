@@ -64,7 +64,6 @@ def trt_batch_detect(net,engine, img_batch, device):
     img_batch = img_batch.to(device, dtype=torch.float32)
     img_batch = img_batch.flip(-3)  # RGB to BGR
     img_batch = img_batch - torch.tensor([104.0, 117.0, 123.0], device=device).view(1, 3, 1, 1)
-    print("TensorRT Speed up inference")
     img_batch= img_batch.cpu().numpy() ##speed up
     shape=img_batch.shape ##speed up
     net.set_binding_shape(0, shape) ##speed up
@@ -104,9 +103,6 @@ class FaceAlignment_trt(FaceAlignment):
     
     def __init__(self,flip_input=False, device='cuda'):
         super().__init__(face_alignment.LandmarksType.TWO_D, flip_input=False, device='cuda')
-        # with open(DEBUG_ENGINE_PATH, "rb") as f, trt.Runtime(TRT_LOGGER) as runtime: 
-        #     engine = runtime.deserialize_cuda_engine(f.read())   
-        # self.face_detector = engine.create_execution_context()
         self.face_detector=SFD_Detector_trt(device)
         
         
