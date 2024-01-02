@@ -344,7 +344,7 @@ class Renderer(torch.nn.Module):
                                          layers=['relu_1_1', 'relu_2_1', 'relu_3_1', 'relu_4_1', 'relu_5_1'],
                                          num_scales=2)
 
-    def forward(self, face_frame_img, target_sketches, ref_N_frame_img, ref_N_frame_sketch, audio_mels): #T=1
+    def forward(self, face_frame_img, target_sketches, ref_N_frame_img, ref_N_frame_sketch, audio_mels, training=False): #T=1
         #            (B,1,3,H,W)   (B,5,3,H,W)       (B,N,3,H,W)   (B,N,3,H,W)  (B,T,1,hv,wv)T=1
         # (1)warping reference images and their feature
         wrapped_h1, wrapped_h2, wrapped_ref = self.flow_module(ref_N_frame_img, ref_N_frame_sketch, target_sketches)
@@ -361,13 +361,15 @@ class Renderer(torch.nn.Module):
         translation_input=torch.cat([gt_mask_face, target_sketches], dim=1) #  (B*T,3+3,H,W)
         generated_face = self.translation(translation_input, wrapped_ref, wrapped_h1, wrapped_h2, audio_mels) #translation_input
 
-        perceptual_gen_loss = self.perceptual(generated_face, gt_face, use_style_loss=True,
-                                              weight_style_to_perceptual=250).mean()
-        perceptual_warp_loss = self.perceptual(wrapped_ref, gt_face, use_style_loss=False,
-                                               weight_style_to_perceptual=0.).mean()
-        return generated_face, wrapped_ref, torch.unsqueeze(perceptual_warp_loss, 0), torch.unsqueeze(
-            perceptual_gen_loss, 0)
-        # (B,3,H,W) and losses
+        if training:
+            perceptual_gen_loss = self.perceptual(generated_face, gt_face, use_style_loss=True,
+                                                  weight_style_to_perceptual=250).mean()
+            perceptual_warp_loss = self.perceptual(wrapped_ref, gt_face, use_style_loss=False,
+                                                   weight_style_to_perceptual=0.).mean()
+            return generated_face, wrapped_ref, torch.unsqueeze(perceptual_warp_loss, 0), torch.unsqueeze(
+                perceptual_gen_loss, 0)
+            # (B,3,H,W) and losses
+        else: return generated_face, wrapped_ref, None, None
 
 #the following is the code for Perceptual(VGG) loss
 
