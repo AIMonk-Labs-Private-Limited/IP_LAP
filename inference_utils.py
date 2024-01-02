@@ -335,8 +335,6 @@ def prepare_output_stream(ori_background_frames,temp_dir,mel_chunks,input_vid_le
     frame_h, frame_w = ori_background_frames[0].shape[:-1]
     out_stream = cv2.VideoWriter('{}/result.avi'.format(temp_dir), cv2.VideoWriter_fourcc(*'DIVX'), fps,
                                 (frame_w, frame_h))  # +frame_h*3
-    import pdb;pdb.set_trace()
-
     ##generate final face image and output video##
     input_mel_chunks_len = len(mel_chunks)
     input_frame_sequence = torch.arange(input_vid_len).tolist()
@@ -422,7 +420,6 @@ def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, in
                  input_frame_sequence, face_crop_results, all_pose_landmarks, ori_background_frames,
                  frame_w, frame_h, ref_imgs, ref_img_sketches, out_stream, input_audio_path,
                  outfile_path, Nl_content, Nl_pose,restorer):
-    # import pdb;pdb.set_trace()
     fast_restorer=define_enhancer(method='gfpgan')
     for batch_idx, batch_start_idx in tqdm(enumerate(range(0, input_mel_chunks_len - 2, 1)),total=len(range(0, input_mel_chunks_len - 2, 1))):
         # preprocessing_st = time.time()
@@ -532,9 +529,6 @@ def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, in
         # postprocessing_et = time.time()
         # postprocessing_time.append(postprocessing_et - postprocessing_st)
         # complete_time.append(postprocessing_et - preprocessing_st)
-
-    import pdb;pdb.set_trace()
-
 
     out_stream.release()
     command = 'ffmpeg -y -i {} -i {} -strict -2 -q:v 1 {}'.format(input_audio_path, '{}/result.avi'.format(temp_dir), outfile_path)

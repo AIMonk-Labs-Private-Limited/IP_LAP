@@ -14,7 +14,7 @@ from inference_utils import *
 
 # from gfpgan import GFPGANer
 from pathlib import Path
-
+from ip_lap_tensorrt import FaceAlignment_trt
 import sys
 # GFPGAN_CKPT_PATH = os.path.join(
 #     # path to the dir that contains checkpoint dir
@@ -31,7 +31,8 @@ class IPLAP_tritoninference:
     def __init__(self,landmark_gen_checkpoint_path,renderer_checkpoint_path):
         self.mp_face_mesh = mp.solutions.face_mesh
         self.drawing_spec = mp.solutions.drawing_utils.DrawingSpec(thickness=1, circle_radius=1)
-        self.fa = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, flip_input=False, device='cuda')
+        # self.fa = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, flip_input=False, device='cuda')
+        self.fa=FaceAlignment_trt(flip_input=False, device='cuda')
         # self.temp_dir = temp_dir
         
 
@@ -56,8 +57,6 @@ class IPLAP_tritoninference:
     def infer(self,input_video_path,input_audio_path,temp_dir,bgremoval):
 
         # result_out_dir = os.path.dirname(temp_dir)
-        # import pdb;pdb.set_trace()
-
         outfile_path = os.path.join(temp_dir,
                             '{}_N_{}_Nl_{}.mp4'.format(input_video_path.split('/')[-1][:-4] + 'result', ref_img_N, Nl))
 
@@ -81,7 +80,6 @@ class IPLAP_tritoninference:
         frame_h, frame_w, out_stream, input_mel_chunks_len, input_frame_sequence = prepare_output_stream(
             ori_background_frames, temp_dir, mel_chunks, input_vid_len, fps
         )
-        # import pdb;pdb.set_trace()
         outfile_path =render_loop(
             self.landmark_generator_model, self.renderer, self.drawing_spec, self.fa,temp_dir, input_mel_chunks_len, mel_chunks,
             input_frame_sequence, face_crop_results, all_pose_landmarks, ori_background_frames,
@@ -94,7 +92,6 @@ class IPLAP_tritoninference:
         #     frame_w, frame_h, ref_imgs, ref_img_sketches, out_stream, input_audio_path,
         #     outfile_path, Nl_content, Nl_pose,self.gfpgan,
         # )
-        # import pdb;pdb.set_trace()
         if bgremoval:
             output_path=os.path.join(temp_dir,"matts")
             os.makedirs(output_path,exist_ok=True)
