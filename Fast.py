@@ -28,36 +28,28 @@ import os
 class Fast_PriorBox(PriorBox):
     def __init__(self, cfg, image_size=None):
         super().__init__(cfg, image_size)
+        
+    def process(self,xv,st,min_sizes,image_size):
+        v_1,v_2=[(xv+0.5)*st/image_size]*2
+        v_1,v_2=v_1.flatten(),v_2.flatten()
+        s_k1,s_k2=torch.tensor(min_sizes)/image_size
+        return v_1,v_2,s_k1,s_k2
+        
 
     def forward(self):
-        
         anchors = []
-        for k, f in enumerate(self.feature_maps):
-                
+        for k, f in enumerate(self.feature_maps):    
             st=self.steps[k]
-            min_sizes = self.min_sizes[k]
-            
+            min_sizes = self.min_sizes[k]        
             xv,yv=torch.meshgrid([torch.arange(0,f[0]),torch.arange(0,f[1])])
-            
-            xv_1,xv_2=[(xv+0.5)*st/self.image_size[1]]*2
-            xv_1,xv_2=xv_1.flatten(),xv_2.flatten()
-            
-            yv_1,yv_2=[(yv+0.5)*st/self.image_size[0]]*2
-            yv_1,yv_2=yv_1.flatten(),yv_2.flatten()
-            
-            s_kx1,s_kx2=torch.tensor(min_sizes)/self.image_size[1]
-            s_ky1,s_ky2=torch.tensor(min_sizes)/self.image_size[0]
-            
-            arr_1=torch.stack([yv_1,xv_1,s_kx1*torch.ones_like(xv_1),s_ky1*torch.ones_like(yv_1)],dim=1)#.reshape(-1)
-            arr_2=torch.stack([yv_2,xv_2,s_kx2*torch.ones_like(xv_2),s_ky2*torch.ones_like(yv_2)],dim=1)#.reshape(-1)
-            
+            xv_1,xv_2,s_kx1,s_kx2=self.process(xv,st,min_sizes,self.image_size[1]) ##for getting in x-direction
+            yv_1,yv_2,s_ky1,s_ky2=self.process(yv,st,min_sizes,self.image_size[0]) ##for getting in y-direction           
+            arr_1=torch.stack([yv_1,xv_1,s_kx1*torch.ones_like(xv_1),s_ky1*torch.ones_like(yv_1)],dim=1)
+            arr_2=torch.stack([yv_2,xv_2,s_kx2*torch.ones_like(xv_2),s_ky2*torch.ones_like(yv_2)],dim=1)     
             anchors.append(torch.cat((arr_1,arr_2),dim=1).flatten())
-
-        output=torch.Tensor(torch.cat(anchors,dim=0)).view(-1,4)
-        
+        output=torch.Tensor(torch.cat(anchors,dim=0)).view(-1,4)  
         if self.clip:
-            output.clamp_(max=1, min=0)
-            
+            output.clamp_(max=1, min=0)   
         return output
  
 def get_largest_face(det_faces, h, w):
@@ -199,7 +191,7 @@ class FAST_FaceRestoreHelper(FaceRestoreHelper):
                     use_parse=True,
                     device="cuda:0",
                     model_rootpath='gfpgan/weights'):
-        upscale=2
+        upscale=1
         model_rootpath='gfpgan/weights'
         self.device=device
         super().__init__(
@@ -444,7 +436,7 @@ class FAST_FaceRestoreHelper(FaceRestoreHelper):
 
 class FAST_GFGGaner(GFPGANer):
     
-    def __init__(self, model_path, upscale=2, arch='clean', channel_multiplier=2, bg_upsampler=None, device=None):
+    def __init__(self, model_path, upscale=1, arch='clean', channel_multiplier=2, bg_upsampler=None, device=None):
         super().__init__(model_path=model_path,
             upscale=upscale,
             arch=arch,
@@ -452,14 +444,14 @@ class FAST_GFGGaner(GFPGANer):
             bg_upsampler=bg_upsampler)
         
         # initialize face helper
-        self.face_helper = FAST_FaceRestoreHelper(upscale=2,face_size=512,crop_ratio=(1, 1),det_model='retinaface_resnet50',
+        self.face_helper = FAST_FaceRestoreHelper(upscale=upscale,face_size=512,crop_ratio=(1, 1),det_model='retinaface_resnet50',
                     save_ext='png',
                     use_parse=True,
                     device=self.device,
                     model_rootpath='gfpgan/weights')
         
-    def reset_retinaface_priors(self):
-        self.face_helper.face_det.reset_priors()
+    def reset_retinaface_priors(self,image_size):
+        self.face_helper.face_det.reset_priors(image_size)
         
 
     # vaibhav:   

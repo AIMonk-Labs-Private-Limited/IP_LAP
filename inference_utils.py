@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 # from gfpgan import GFPGANer
-from .Fast import FAST_GFGGaner
+from Fast import FAST_GFGGaner
 
 import kornia
 
@@ -335,7 +335,7 @@ def prepare_output_stream(ori_background_frames,temp_dir,mel_chunks,input_vid_le
     frame_h, frame_w = ori_background_frames[0].shape[:-1]
     out_stream = cv2.VideoWriter('{}/result.avi'.format(temp_dir), cv2.VideoWriter_fourcc(*'DIVX'), fps,
                                 (frame_w, frame_h))  # +frame_h*3
-
+    import pdb;pdb.set_trace()
 
     ##generate final face image and output video##
     input_mel_chunks_len = len(mel_chunks)
@@ -423,7 +423,7 @@ def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, in
                  frame_w, frame_h, ref_imgs, ref_img_sketches, out_stream, input_audio_path,
                  outfile_path, Nl_content, Nl_pose,restorer):
     # import pdb;pdb.set_trace()
-    # fast_restorer=define_enhancer(method='gfpgan')
+    fast_restorer=define_enhancer(method='gfpgan')
     for batch_idx, batch_start_idx in tqdm(enumerate(range(0, input_mel_chunks_len - 2, 1)),total=len(range(0, input_mel_chunks_len - 2, 1))):
         # preprocessing_st = time.time()
         T_input_frame, T_ori_face_coordinates = [], []
@@ -457,10 +457,6 @@ def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, in
         T_pose = T_pose.unsqueeze(0)  # (1,T, 2,74)
         # preprocessing_et = time.time()
         # preprocessing_time.append(preprocessing_et-preprocessing_st)
-
-
-
-
         # landmark  generator inference
         # landmark_gen_st = time.time()
         Nl_pose, Nl_content = Nl_pose.cuda(), Nl_content.cuda() # (Nl,2,74)  (Nl,2,57)
@@ -471,11 +467,6 @@ def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, in
         T_predict_full_landmarks = torch.cat([T_pose, predict_content], dim=2).cpu().numpy()  # (1*T,2,131)
         # landmark_gen_et = time.time()
         # landmark_gen_time.append(landmark_gen_et - landmark_gen_st)
-
-
-
-
-
         #1.draw target sketch
         # target_sketches_st = time.time()
         T_target_sketches = []
@@ -501,8 +492,6 @@ def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, in
         
         # target_sketches_et = time.time()
         # target_sketches_time.append(target_sketches_et - target_sketches_st)
-
-
         # 3. render the full face
         # require (1,1,3,H,W)   (1,T,3,H,W)  (1,N,3,H,W)   (1,N,3,H,W)  (1,1,1,h,w)
         # return  (1,3,H,W)
@@ -513,28 +502,28 @@ def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, in
         gen_face = (generated_face.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)  # (H,W,3)
         # renderer_et = time.time()
         # renderer_time.append(renderer_et - renderer_st)
-
-
-
-
         # 4. paste each generated face
         # postprocessing_st = time.time()
         y1, y2, x1, x2 = T_ori_face_coordinates[2][1]  # coordinates of face bounding box
         original_background = T_input_frame[2].copy()
         T_input_frame[2][y1:y2, x1:x2] = cv2.resize(gen_face,(x2 - x1, y2 - y1))  #resize and paste generated face
         # 5. post-process
-        full = merge_face_contour_only(original_background, T_input_frame[2], T_ori_face_coordinates[2][1],fa)   #(H,W,3)
-        # 5.1 face enhancer
-         
-        # previous_image_size = full.shape[:2]
-        # fast_restorer.reset_retinaface_priors(previous_image_size)
-        # if images[idx].shape[:2] != previous_image_size:
-            # do reset priors here
-        #     fast_restorer.reset_retinaface_priors(images[idx].shape[:2])
-        #     previous_image_size = images[idx].shape[:2]
-        # _,_,full=fast_restorer.enhance(full, has_aligned=False, only_center_face=False,paste_back=True)
         
-        # full=cv2.cvtColor(full, cv2.COLOR_BGR2RGB)
+        full = merge_face_contour_only(original_background, T_input_frame[2], T_ori_face_coordinates[2][1],fa)   #(H,W,3)
+        # 5.1 face enhancer 
+        ## need to confirm from koustubh and kanchan, whether we need reset_retina_priors logic or not, coz currently we have speeded up the priorbox code.
+        if batch_idx==0:
+            previous_image_size = full.shape[:2]
+            fast_restorer.reset_retinaface_priors(previous_image_size)
+        else:
+        
+            if full.shape[:2] != previous_image_size:
+                # do reset priors here
+                print("There is a change in the size, so reseting the priors")
+                fast_restorer.reset_retinaface_priors(full.shape[:2])
+                previous_image_size = full.shape[:2]
+                
+        _,_,full=fast_restorer.enhance(full, has_aligned=False, only_center_face=False,paste_back=True)        
         # 6.output
         out_stream.write(full)
         if batch_idx == 0:
@@ -544,7 +533,7 @@ def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, in
         # postprocessing_time.append(postprocessing_et - postprocessing_st)
         # complete_time.append(postprocessing_et - preprocessing_st)
 
-
+    import pdb;pdb.set_trace()
 
 
     out_stream.release()
