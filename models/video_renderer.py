@@ -73,14 +73,22 @@ class SPADELayer(torch.nn.Module):
         self.beta = torch.nn.Conv2d(hidden_size, input_channel, kernel_size=kernel_size, stride=stride, padding=padding)
 
     def forward(self, input, modulation):
+        """ input: B*ref_N, C, H, W
+            modulation: B, T_sketch*C, H, W
+        """
+        B, _, _, _ = modulation.shape
+        _, C, H, W = input.shape
         norm = self.instance_norm(input)
 
         conv_out = self.conv1(modulation)
 
-        gamma = self.gamma(conv_out)
-        beta = self.beta(conv_out)
+        gamma = self.gamma(conv_out).unsqueeze(1)
+        beta = self.beta(conv_out).unsqueeze(1)
 
-        return norm + norm * gamma + beta
+        norm = norm.reshape(B, -1, C, H, W)
+        norm = norm + norm * gamma 
+        norm = norm + beta
+        return norm.reshape(-1, C, H, W)
 
 
 class SPADE(torch.nn.Module):
@@ -151,10 +159,10 @@ def make_coordinate_grid(flow):
 
     x = torch.arange(w).to(flow)
     y = torch.arange(h).to(flow)
-
+    #NOTE: F.interpolate being used with align_corners=False. This grid implementation is for align_corners=True.
+    # See fn grid_sampler_unnormalize at https://github.com/OrkhanHI/pytorch_grid_sample_python/blob/main/pytorch_grid_sample_python.md
     x = (2 * (x / (w - 1)) - 1)
     y = (2 * (y / (h - 1)) - 1)
-
     yy = y.view(-1, 1).repeat(1, w)
     xx = x.view(1, -1).repeat(h, 1)
 
@@ -165,11 +173,17 @@ def make_coordinate_grid(flow):
 
 def warping(source_image, deformation):
     r"""warp the input image according to the deformation
+    source_img -> N, C, H, W
+    deformation -> N, H1, W2, 2
+    output -> N, C, H, W
+    Each pixel(at 2D coordinate (x0,y0)) in each channel of output is obtained by bilinear 
+    interpolation of the source image pixels.Which pixel to interpolate is determined by deformation[:,x0,y0,:]
+    
     Args:
         source_image (tensor): source images to be warpped
         deformation (tensor): deformations used to warp the images; value in range (-1, 1)
-    Returns:
-        output (tensor): the warpped images
+    Returns: 
+        output (tensor): the warpped images, same shape as the source_img
     """
     _, h_old, w_old, _ = deformation.shape
     _, _, h, w = source_image.shape
@@ -210,50 +224,51 @@ class DenseFlowNetwork(torch.nn.Module):
 
     def forward(self, ref_N_frame_img, ref_N_frame_sketch, T_driving_sketch): #to output: (B*T,3,H,W)
                    #   (B, N, 3, H, W)(B, N, 3, H, W)    (B, 5, 3, H, W)  #
-        ref_N = ref_N_frame_img.size(1)
+        B,ref_N,C,H,W = ref_N_frame_img.shape
 
         driving_sketch=torch.cat([T_driving_sketch[:,i] for i in range(T_driving_sketch.size(1))], dim=1)  #(B, 3*5, H, W)
 
         wrapped_h1_sum, wrapped_h2_sum, wrapped_ref_sum=0.,0.,0.
         softmax_denominator=0.
-        T = 1  # during rendering, generate T=1 image  at a time
-        for ref_idx in range(ref_N): # each ref img provide information for each B*T frame
-            ref_img= ref_N_frame_img[:, ref_idx]  #(B, 3, H, W)
-            ref_img = ref_img.unsqueeze(1).expand(-1, T, -1, -1, -1)  # (B,T, 3, H, W)
-            ref_img = torch.cat([ref_img[i] for i in range(ref_img.size(0))], dim=0)  # (B*T, 3, H, W)
 
-            ref_sketch = ref_N_frame_sketch[:, ref_idx] #(B, 3, H, W)
-            ref_sketch = ref_sketch.unsqueeze(1).expand(-1, T, -1, -1, -1)  # (B,T, 3, H, W)
-            ref_sketch = torch.cat([ref_sketch[i] for i in range(ref_sketch.size(0))], dim=0)  # (B*T, 3, H, W)
+        #predict flow and weight
+        ref_img = ref_N_frame_img.reshape(-1, C, H, W)  # (B*T, 3, H, W)
+        ref_sketch = ref_N_frame_sketch.reshape(-1, C, H, W)  # (B*T, 3, H, W)
 
-            #predict flow and weight
-            flow_module_input = torch.cat((ref_img, ref_sketch), dim=1)  #(B*T, 3+3, H, W)
-            # Convolutional Layers
-            h1 = self.conv1_relu(self.conv1_bn(self.conv1(flow_module_input)))   #(32,128,128)
-            h2 = self.conv2_relu(self.conv2_bn(self.conv2(h1)))    #(256,64,64)
-            # SPADE Blocks
-            downsample_64 = downsample(driving_sketch, (64, 64))   # driving_sketch:(B*T, 3, H, W)
+        flow_module_input = torch.cat((ref_img, ref_sketch), dim=1)  #(B*T, 3+3, H, W)
+        # Convolutional Layers
+        h1 = self.conv1_relu(self.conv1_bn(self.conv1(flow_module_input)))   #(32,128,128)
+        h2 = self.conv2_relu(self.conv2_bn(self.conv2(h1)))    #(256,64,64)
+        # SPADE Blocks
+        downsample_64 = downsample(driving_sketch, (64, 64))   # driving_sketch:(B*T, 3, H, W)
 
-            spade_layer = self.spade_layer_1(h2, downsample_64)  #(256,64,64)
-            spade_layer = self.spade_layer_2(spade_layer, downsample_64)   #(256,64,64)
+        spade_layer = self.spade_layer_1(h2, downsample_64)  #(256,64,64)
+        spade_layer = self.spade_layer_2(spade_layer, downsample_64)   #(256,64,64)
 
-            spade_layer = self.pixel_shuffle_1(spade_layer)   #(64,128,128)
+        spade_layer = self.pixel_shuffle_1(spade_layer)   #(64,128,128)
 
-            spade_layer = self.spade_layer_4(spade_layer, driving_sketch)    #(64,128,128)
+        spade_layer = self.spade_layer_4(spade_layer, driving_sketch)    #(64,128,128)
 
-            # Final Convolutional Layer
-            output_flow = self.conv_4(spade_layer)      #   (B*T,2,128,128)
-            output_weight=self.conv_5(spade_layer)       #  (B*T,1,128,128)
+        # Final Convolutional Layer
+        output_flow = self.conv_4(spade_layer)      #   (B*T,2,128,128)
+        output_weight=self.conv_5(spade_layer)       #  (B*T,1,128,128)
 
-            deformation=convert_flow_to_deformation(output_flow)
-            wrapped_h1 = warping(h1, deformation)  #(32,128,128)
-            wrapped_h2 = warping(h2, deformation)   #(256,64,64)
-            wrapped_ref = warping(ref_img, deformation)  #(3,128,128)
+        deformation=convert_flow_to_deformation(output_flow)
+        wrapped_h1 = warping(h1, deformation)  #(32,128,128)
+        wrapped_h2 = warping(h2, deformation)   #(256,64,64)
+        wrapped_ref = warping(ref_img, deformation)  #(3,128,128)
 
-            softmax_denominator+=output_weight
-            wrapped_h1_sum+=wrapped_h1*output_weight
-            wrapped_h2_sum+=wrapped_h2*downsample(output_weight, (64,64))
-            wrapped_ref_sum+=wrapped_ref*output_weight
+        softmax_denominator+=output_weight
+        wrapped_h1_sum+=wrapped_h1*output_weight
+        wrapped_h2_sum+=wrapped_h2*downsample(output_weight, (64,64))
+        wrapped_ref_sum+=wrapped_ref*output_weight
+        
+        # reduce out the sequence dim (dim 1)
+        softmax_denominator = softmax_denominator.reshape(B,-1, *softmax_denominator.shape[1:]).sum(dim=1)
+        wrapped_h1_sum = wrapped_h1_sum.reshape(B, -1, *wrapped_h1_sum.shape[1:]).sum(dim=1)
+        wrapped_h2_sum =wrapped_h2_sum.reshape(B, -1, *wrapped_h2_sum.shape[1:]).sum(dim=1)
+        wrapped_ref_sum =wrapped_ref_sum.reshape(B, -1, *wrapped_ref_sum.shape[1:]).sum(dim=1)
+            
         #return weighted warped feataure and images
         softmax_denominator+=0.00001
         wrapped_h1_sum=wrapped_h1_sum/softmax_denominator
@@ -344,7 +359,7 @@ class Renderer(torch.nn.Module):
                                          layers=['relu_1_1', 'relu_2_1', 'relu_3_1', 'relu_4_1', 'relu_5_1'],
                                          num_scales=2)
 
-    def forward(self, face_frame_img, target_sketches, ref_N_frame_img, ref_N_frame_sketch, audio_mels, training=False): #T=1
+    def forward(self, face_frame_img, target_sketches, ref_N_frame_img, ref_N_frame_sketch, audio_mels, inference=True): #T=1
         #            (B,1,3,H,W)   (B,5,3,H,W)       (B,N,3,H,W)   (B,N,3,H,W)  (B,T,1,hv,wv)T=1
         # (1)warping reference images and their feature
         wrapped_h1, wrapped_h2, wrapped_ref = self.flow_module(ref_N_frame_img, ref_N_frame_sketch, target_sketches)
@@ -361,15 +376,15 @@ class Renderer(torch.nn.Module):
         translation_input=torch.cat([gt_mask_face, target_sketches], dim=1) #  (B*T,3+3,H,W)
         generated_face = self.translation(translation_input, wrapped_ref, wrapped_h1, wrapped_h2, audio_mels) #translation_input
 
-        if training:
+        if not inference:
             perceptual_gen_loss = self.perceptual(generated_face, gt_face, use_style_loss=True,
                                                   weight_style_to_perceptual=250).mean()
             perceptual_warp_loss = self.perceptual(wrapped_ref, gt_face, use_style_loss=False,
                                                    weight_style_to_perceptual=0.).mean()
             return generated_face, wrapped_ref, torch.unsqueeze(perceptual_warp_loss, 0), torch.unsqueeze(
                 perceptual_gen_loss, 0)
-            # (B,3,H,W) and losses
         else: return generated_face, wrapped_ref, None, None
+        # (B,3,H,W) and losses
 
 #the following is the code for Perceptual(VGG) loss
 
