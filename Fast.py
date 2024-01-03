@@ -119,12 +119,6 @@ class Fast_RetinaFace(RetinaFace):
         self.priors = None
         self.previous_image_size = None
     
-    # probably not needed
-    def reset_priors(self, image_size):
-        priorbox=Fast_PriorBox(self.cfg, image_size=image_size)
-        self.priors=priorbox.forward().to(self.device)
-    
-    # vaibhav: rename this function to __detect_faces()
     def __detect_faces(self, inputs):
         # get scale
         height, width = inputs.shape[2:]
@@ -138,11 +132,10 @@ class Fast_RetinaFace(RetinaFace):
         if self.half_inference:
             inputs = inputs.half()
         loc, conf, landmarks = self(inputs)
-        priors = self.priors
+        priorbox=Fast_PriorBox(self.cfg, image_size=inputs.shape[2:])
+        priors = priorbox.forward().to(self.device)
         return loc, conf, landmarks, priors    
     
-    # vaibhav: this function is not needed if __fast__detect_faces() renamed to
-    # __detect_faces()
     def detect_faces(
         self,
         image,
@@ -207,8 +200,6 @@ class FAST_FaceRestoreHelper(FaceRestoreHelper):
         det_model='retinaface_resnet50'
         self.face_det = init_detection_model(det_model, half=False, device=self.device, model_rootpath=model_rootpath)
     
-    # vaibhav: I am not seeing any changes in this function, it's same as parent class
-    # just rename fast_detect_faces() to detect_faces()
     def get_face_landmarks_5(self,
                              only_keep_largest=False,
                              only_center_face=False,
@@ -321,7 +312,6 @@ class FAST_FaceRestoreHelper(FaceRestoreHelper):
         
         return len(self.all_landmarks_5)
      
-    # vaibhav: rename this function to paste_faces_to_input_image()
     def paste_faces_to_input_image(self, save_path=None, upsample_img=None):
         
         from facexlib.utils.misc import img2tensor, imwrite
@@ -450,14 +440,7 @@ class FAST_GFGGaner(GFPGANer):
                     device=self.device,
                     model_rootpath='gfpgan/weights')
         
-    def reset_retinaface_priors(self,image_size):
-        self.face_helper.face_det.reset_priors(image_size)
         
-
-    # vaibhav:   
-    # this whole function is not needed at all, rename fast_get_face_landmarks_5()
-    # fast_paste_faces_to_input_image() function names, keep default names and it should 
-    # work just due to inheritance
     @torch.no_grad()
     def fast_enhance(self, img, has_aligned=False, only_center_face=False, paste_back=True, weight=0.5):
         from basicsr.utils import img2tensor, tensor2img

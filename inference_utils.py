@@ -507,19 +507,7 @@ def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, in
         # 5. post-process
         
         full = merge_face_contour_only(original_background, T_input_frame[2], T_ori_face_coordinates[2][1],fa)   #(H,W,3)
-        # 5.1 face enhancer 
-        ## need to confirm from koustubh and kanchan, whether we need reset_retina_priors logic or not, coz currently we have speeded up the priorbox code.
-        if batch_idx==0:
-            previous_image_size = full.shape[:2]
-            fast_restorer.reset_retinaface_priors(previous_image_size)
-        else:
-        
-            if full.shape[:2] != previous_image_size:
-                # do reset priors here
-                print("There is a change in the size, so reseting the priors")
-                fast_restorer.reset_retinaface_priors(full.shape[:2])
-                previous_image_size = full.shape[:2]
-                
+        # 5.1 face enhancer         
         _,_,full=fast_restorer.enhance(full, has_aligned=False, only_center_face=False,paste_back=True)        
         # 6.output
         out_stream.write(full)
