@@ -1,4 +1,5 @@
 import torch
+import time
 import cv2
 import os
 import subprocess
@@ -14,8 +15,15 @@ from pathlib import Path
 
 # from gfpgan import GFPGANer
 from Fast import FAST_GFGGaner
+from ip_lap_tensorrt import FaceAlignment_trt
 
 import kornia
+
+# defining face alignment object here so that process can access this global variable
+global_fa = FaceAlignment_trt(flip_input=False, device='cuda')
+model_inf_elapsed_time = 0
+postproc_elapsed_time = 0
+gfpgan_elapsed_time = 0
 
 GFPGAN_CKPT_PATH = os.path.join(
     # path to the dir that contains checkpoint dir
@@ -407,7 +415,7 @@ def define_enhancer(method,bg_upsampler=None):
     #     bg_upsampler=bg_upsampler)
     fast_restorer=FAST_GFGGaner(
         model_path=model_path,
-        upscale=2,
+        upscale=1,
         arch=arch,
         channel_multiplier=channel_multiplier,
         bg_upsampler=bg_upsampler)   
@@ -415,31 +423,25 @@ def define_enhancer(method,bg_upsampler=None):
     
     return fast_restorer
 
-def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, input_mel_chunks_len, mel_chunks,
-                 input_frame_sequence, face_crop_results, all_pose_landmarks, ori_background_frames,
-                 frame_w, frame_h, ref_imgs, ref_img_sketches, out_stream, input_audio_path,
-                 outfile_path, Nl_content, Nl_pose,restorer):
-    fast_restorer=define_enhancer(method='gfpgan')
-    for batch_idx, batch_start_idx in tqdm(enumerate(range(0, input_mel_chunks_len - 2, 1)),total=len(range(0, input_mel_chunks_len - 2, 1))):
-        # preprocessing_st = time.time()
-        T_input_frame, T_ori_face_coordinates = [], []
-        #note: input_frame include background as well as face
-        T_mel_batch, T_crop_face,T_pose_landmarks = [], [],[]
-
-        # (1) for each batch of T frame, generate corresponding landmarks using landmark generator
-        for mel_chunk_idx in range(batch_start_idx, batch_start_idx + T):  # for each T frame
-            # 1 input audio
-            T_mel_batch.append(mel_chunks[max(0, mel_chunk_idx - 2)])
-
-            # 2.input face
-            input_frame_idx = int(input_frame_sequence[mel_chunk_idx])
-            face, coords = face_crop_results[input_frame_idx]
-            T_crop_face.append(face)
-            T_ori_face_coordinates.append((face, coords))  ##input face
-            # 3.pose landmarks
-            T_pose_landmarks.append(all_pose_landmarks[input_frame_idx])
-            # 3.background
-            T_input_frame.append(ori_background_frames[input_frame_idx].copy())
+def model_inference_process(input_queue, output_queue, 
+                            landmark_generator_model, renderer, drawing_spec,
+                            model_inf_elapsed_time):
+    # model_inf_time is a shared memory Value
+    # this function should be run as daemon process only as it does not handle
+    # exiting inside infinite loop. Daemon process will be completed once its parents
+    # process also gets completed in this case.
+    print("Model inf process ready")
+    while True:
+        data = input_queue.get()
+        start_time = time.time()
+        
+        (T_input_frame, T_ori_face_coordinates, T_mel_batch, T_crop_face, T_pose_landmarks, Nl_pose, 
+            Nl_content, frame_w, frame_h, ref_imgs, ref_img_sketches, batch_idx) = data
+        
+        # reset elapsed time
+        if batch_idx == 0:
+            model_inf_elapsed_time.value = 0.0
+        
         T_mels = torch.FloatTensor(np.asarray(T_mel_batch)).unsqueeze(1).unsqueeze(0)  # 1,T,1,h,w
         #prepare pose landmarks
         T_pose = torch.zeros((T, 2, 74))  # 74 landmark
@@ -451,20 +453,16 @@ def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, in
             T_pose[idx, 1, :] = torch.FloatTensor(
                 [T_pose_landmarks[idx][i][2] for i in range(len(T_pose_landmarks[idx]))])  # y
         T_pose = T_pose.unsqueeze(0)  # (1,T, 2,74)
-        # preprocessing_et = time.time()
-        # preprocessing_time.append(preprocessing_et-preprocessing_st)
-        # landmark  generator inference
-        # landmark_gen_st = time.time()
+        
+        #landmark  generator inference
         Nl_pose, Nl_content = Nl_pose.cuda(), Nl_content.cuda() # (Nl,2,74)  (Nl,2,57)
         T_mels, T_pose = T_mels.cuda(), T_pose.cuda()
         with torch.no_grad():  # require    (1,T,1,hv,wv)(1,T,2,74)(1,T,2,57)
             predict_content = landmark_generator_model(T_mels, T_pose, Nl_pose, Nl_content)  # (1*T,2,57)
         T_pose = torch.cat([T_pose[i] for i in range(T_pose.size(0))], dim=0)  # (1*T,2,74)
         T_predict_full_landmarks = torch.cat([T_pose, predict_content], dim=2).cpu().numpy()  # (1*T,2,131)
-        # landmark_gen_et = time.time()
-        # landmark_gen_time.append(landmark_gen_et - landmark_gen_st)
+        
         #1.draw target sketch
-        # target_sketches_st = time.time()
         T_target_sketches = []
         for frame_idx in range(T):
             full_landmarks = T_predict_full_landmarks[frame_idx]  # (2,131)
@@ -479,49 +477,176 @@ def render_loop(landmark_generator_model, renderer, drawing_spec,fa,temp_dir, in
             if frame_idx == 2:
                 show_sketch = cv2.resize(drawn_sketech, (frame_w, frame_h)).astype(np.uint8)
             T_target_sketches.append(torch.FloatTensor(drawn_sketech) / 255)
+        
         T_target_sketches = torch.stack(T_target_sketches, dim=0).permute(0, 3, 1, 2)  # (T,3,128, 128)
         target_sketches = T_target_sketches.unsqueeze(0).cuda()  # (1,T,3,128, 128)
 
         # 2.lower-half masked face
         ori_face_img = torch.FloatTensor(cv2.resize(T_crop_face[2], (img_size, img_size)) / 255).permute(2, 0, 1).unsqueeze(
             0).unsqueeze(0).cuda()  #(1,1,3,H, W)
-        
-        # target_sketches_et = time.time()
-        # target_sketches_time.append(target_sketches_et - target_sketches_st)
         # 3. render the full face
         # require (1,1,3,H,W)   (1,T,3,H,W)  (1,N,3,H,W)   (1,N,3,H,W)  (1,1,1,h,w)
         # return  (1,3,H,W)
-        # renderer_st = time.time()
         with torch.no_grad():
             generated_face, _, _, _ = renderer(ori_face_img, target_sketches, ref_imgs, ref_img_sketches,
                                                         T_mels[:, 2].unsqueeze(0))  # T=1
         gen_face = (generated_face.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)  # (H,W,3)
-        # renderer_et = time.time()
-        # renderer_time.append(renderer_et - renderer_st)
+        
+        output_queue.put((gen_face, T_ori_face_coordinates, T_input_frame, batch_idx))
+        
+        elpased_time = time.time() - start_time
+        # aquire lock for read write operations
+        with model_inf_elapsed_time.get_lock():
+            model_inf_elapsed_time.value += elpased_time
+        
+        # print(f"Model inf completed for batch idx: {batch_idx}, "
+        #       f"Model inf elpased time: {model_inf_elapsed_time}")
+    
+def postprocessing_process(input_queue, output_queue, mp_lock, postproc_elapsed_time):
+    # this function should be run as daemon process only as it does not handle
+    # exiting inside infinite loop. Daemon process will be completed once its parents
+    # process also gets completed in this case.
+    # with mp_lock:
+    #     print("postproc start time: ", time.time())
+    global global_fa
+    #print("Is global_fa None: ", global_fa is None)
+    print("post processing process ready")
+    while True:
+        input_data = input_queue.get()
+        
+        start_time = time.time()
+        
+        gen_face, T_ori_face_coordinates, T_input_frame, batch_idx = input_data
+        
+        # reset elapsed time
+        if batch_idx == 0:
+            postproc_elapsed_time.value = 0
+
         # 4. paste each generated face
-        # postprocessing_st = time.time()
         y1, y2, x1, x2 = T_ori_face_coordinates[2][1]  # coordinates of face bounding box
         original_background = T_input_frame[2].copy()
         T_input_frame[2][y1:y2, x1:x2] = cv2.resize(gen_face,(x2 - x1, y2 - y1))  #resize and paste generated face
         # 5. post-process
+        # full_imgs.append(merge_face_contour_only(original_background, T_input_frame[frame_idx], T_ori_face_coordinates[frame_idx][1],fa))   #(H,W,3)
+        full = merge_face_contour_only(original_background, T_input_frame[2], T_ori_face_coordinates[2][1], global_fa)   #(H,W,3
         
-        full = merge_face_contour_only(original_background, T_input_frame[2], T_ori_face_coordinates[2][1],fa)   #(H,W,3)
-        # 5.1 face enhancer         
-        _,_,full=fast_restorer.enhance(full, has_aligned=False, only_center_face=False,paste_back=True)        
-        # 6.output
-        out_stream.write(full)
-        if batch_idx == 0:
-            out_stream.write(full)
-            out_stream.write(full)
-        # postprocessing_et = time.time()
-        # postprocessing_time.append(postprocessing_et - postprocessing_st)
-        # complete_time.append(postprocessing_et - preprocessing_st)
+        # full = np.concatenate([show_sketch, full], axis=1)
+        output_queue.put((full, batch_idx))
+        elapsed_time = time.time() - start_time
+        # aquire lock for read write operations
+        with postproc_elapsed_time.get_lock():
+            postproc_elapsed_time.value += elapsed_time
+           
+        # with mp_lock:    
+        #     print(f"post processing completed for {batch_idx} "
+        #           f"post processing elapsed time {postproc_elapsed_time}")
 
+# this object is defined here so that face_enhancer_process() process can access
+# it as a global variable. It can not be defined at the top of file as 
+# define_enhancer() is only defined in middle of the file
+global_restorer = define_enhancer(method='gfpgan')
+def face_enhancer_process(input_queue, output_queue, gfpgan_elapsed_time):
+    global global_restorer
+    print("Face enhancer process ready")
+    while True:
+        input_data = input_queue.get()
+        start_time = time.time()
+        frame, batch_idx = input_data
+        
+        # reset elapsed time
+        if batch_idx == 0:
+            gfpgan_elapsed_time.value = 0
+        
+        _, _, frame = global_restorer.enhance(frame, has_aligned=False, only_center_face=False, paste_back=True)
+        
+        output_queue.put((frame, batch_idx))
+        elapsed_time = time.time() - start_time
+        # aquire lock for read write operations
+        with gfpgan_elapsed_time.get_lock():
+            gfpgan_elapsed_time.value += elapsed_time
+        
+        # print(f"face enhancer completed for {batch_idx} "
+        #       f"face enhancer elapsed time {gfpgan_elapsed_time}")
+    
+def global_render_loop(input_queue, output_queue, input_mel_chunks_len, mel_chunks,input_frame_sequence, face_crop_results, 
+                       all_pose_landmarks, ori_background_frames,frame_w, frame_h, ref_imgs, ref_img_sketches, Nl_content, 
+                       Nl_pose, out_stream, input_audio_path, temp_dir, outfile_path):
+    # torch tensor: ref_imgs, ref_img_sketches, Nl_content, Nl_pose
+    
+    # move tensor storage to shared memory
+    ref_imgs = ref_imgs.share_memory_()
+    ref_img_sketches = ref_img_sketches.share_memory_()
+    Nl_content = Nl_content.share_memory_()
+    Nl_pose = Nl_pose.share_memory_()
+    
+    total_iterations = input_mel_chunks_len - 2
+    progress_bar = tqdm(total=total_iterations, desc="Processing")
+
+    start_time = time.time()
+    # put inputs into queue
+    for batch_idx, batch_start_idx in enumerate(range(0, total_iterations, 1)):
+        T_input_frame, T_ori_face_coordinates = [], []
+        T_mel_batch, T_crop_face,T_pose_landmarks = [], [],[]
+        
+        for mel_chunk_idx in range(batch_start_idx, batch_start_idx + T):  # for each T frame
+            # 1 input audio
+            T_mel_batch.append(mel_chunks[max(0, mel_chunk_idx - 2)])
+
+            # 2.input face
+            input_frame_idx = int(input_frame_sequence[mel_chunk_idx])
+            face, coords = face_crop_results[input_frame_idx]
+            T_crop_face.append(face)
+            T_ori_face_coordinates.append((face, coords))  ##input face
+            # 3.pose landmarks
+            T_pose_landmarks.append(all_pose_landmarks[input_frame_idx])
+            # 3.background
+            T_input_frame.append(ori_background_frames[input_frame_idx].copy())
+            
+        input_queue_data = (
+            T_input_frame, T_ori_face_coordinates, T_mel_batch, T_crop_face, T_pose_landmarks, Nl_pose, 
+            Nl_content, frame_w, frame_h, ref_imgs, ref_img_sketches, batch_idx
+        )
+        #print("Adding input for batch idx: ", batch_idx)
+        input_queue.put(input_queue_data)
+        
+        # when for loop is running this part also checks for output queue
+        # and write any output frame if available. It make sure pipeline doesn't
+        # remain blocked.
+        if not output_queue.empty():
+            data = output_queue.get()
+            frame, output_batch_idx = data
+            
+            out_stream.write(frame)
+            progress_bar.update(1)
+            if output_batch_idx == 0:
+                out_stream.write(frame)
+                out_stream.write(frame)
+            
+    
+    # Wait for remaining outputs from queue and write them to file
+    while True:
+        data = output_queue.get()
+        frame, output_batch_idx = data
+        
+        out_stream.write(frame)
+        progress_bar.update(1)
+        if output_batch_idx == 0:
+            out_stream.write(frame)
+            out_stream.write(frame)
+        
+        # when output data's index matches last input's index, we break out of loop 
+        if output_batch_idx == batch_idx:
+            break
+        
+    progress_bar.close()
+    
+    render_loop_time = time.time() - start_time
+        
     out_stream.release()
     command = 'ffmpeg -y -i {} -i {} -b:v 10M -strict -2 -q:v 1 {}'.format(input_audio_path, '{}/result.avi'.format(temp_dir), outfile_path)
     subprocess.call(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     print("succeed output results to:", outfile_path)
     print('{}/result.avi'.format(temp_dir))
     print(input_audio_path)
-    return outfile_path
+    return outfile_path, render_loop_time
 
