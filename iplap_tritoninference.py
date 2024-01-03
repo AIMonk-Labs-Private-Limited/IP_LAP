@@ -19,7 +19,6 @@ import time
 
 # from gfpgan import GFPGANer
 from pathlib import Path
-
 import sys
 # GFPGAN_CKPT_PATH = os.path.join(
 #     # path to the dir that contains checkpoint dir

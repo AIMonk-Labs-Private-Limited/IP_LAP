@@ -12,11 +12,15 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 from pathlib import Path
 
-import face_alignment
-from gfpgan import GFPGANer
+
+# from gfpgan import GFPGANer
+from Fast import FAST_GFGGaner
+from ip_lap_tensorrt import FaceAlignment_trt
+
+import kornia
 
 # defining face alignment object here so that process can access this global variable
-global_fa = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, flip_input=False, device='cuda')
+global_fa = FaceAlignment_trt(flip_input=False, device='cuda')
 model_inf_elapsed_time = 0
 postproc_elapsed_time = 0
 gfpgan_elapsed_time = 0
@@ -73,11 +77,16 @@ def load_model(model, path):
 def swap_masked_region(target_img, src_img, mask): #function used in post-process
     """From src_img crop masked region to replace corresponding masked region
     in target_img
-    """  # swap_masked_region(src_frame, generated_frame, mask=mask_img)
-    mask_img = cv2.GaussianBlur(mask, (21, 21), 11)
+    """
+    target_img=torch.tensor(target_img).to(device=device).permute(2,0,1).unsqueeze(0) ##speed up
+    src_img=torch.tensor(src_img).to(device=device).permute(2,0,1).unsqueeze(0) ##speed up
+    mask=torch.tensor(mask).to(device=device,dtype=torch.float32).permute(2,0,1).unsqueeze(0) ##speed up
+    gauss = kornia.filters.GaussianBlur2d((21, 21),(11,11)) ##speed up
+    mask_img=gauss(mask) ##speed up
     mask1 = mask_img / 255
-    mask1 = np.tile(np.expand_dims(mask1, axis=2), (1, 1, 3))
-    img = src_img * mask1 + target_img * (1 - mask1)
+    mask1= mask1.repeat(1,3,1,1) ##speed up
+    img = src_img * mask1 + target_img * (1 - mask1) 
+    img=img.squeeze(0).permute(1,2,0).detach().cpu().numpy() ##speed up
     return img.astype(np.uint8)
 
 def merge_face_contour_only(src_frame, generated_frame, face_region_coord, fa): #function used in post-process
@@ -333,8 +342,6 @@ def prepare_output_stream(ori_background_frames,temp_dir,mel_chunks,input_vid_le
     frame_h, frame_w = ori_background_frames[0].shape[:-1]
     out_stream = cv2.VideoWriter('{}/result.avi'.format(temp_dir), cv2.VideoWriter_fourcc(*'DIVX'), fps,
                                 (frame_w, frame_h))  # +frame_h*3
-
-
     ##generate final face image and output video##
     input_mel_chunks_len = len(mel_chunks)
     input_frame_sequence = torch.arange(input_vid_len).tolist()
@@ -400,14 +407,21 @@ def define_enhancer(method,bg_upsampler=None):
         # download pre-trained models from url
         model_path = url
     
-    restorer = GFPGANer(
+    # restorer = GFPGANer(
+    #     model_path=model_path,
+    #     upscale=1,
+    #     arch=arch,
+    #     channel_multiplier=channel_multiplier,
+    #     bg_upsampler=bg_upsampler)
+    fast_restorer=FAST_GFGGaner(
         model_path=model_path,
         upscale=1,
         arch=arch,
         channel_multiplier=channel_multiplier,
         bg_upsampler=bg_upsampler)   
     
-    return restorer
+    
+    return fast_restorer
 
 def model_inference_process(input_queue, output_queue, 
                             landmark_generator_model, renderer, drawing_spec,
@@ -470,7 +484,6 @@ def model_inference_process(input_queue, output_queue,
         # 2.lower-half masked face
         ori_face_img = torch.FloatTensor(cv2.resize(T_crop_face[2], (img_size, img_size)) / 255).permute(2, 0, 1).unsqueeze(
             0).unsqueeze(0).cuda()  #(1,1,3,H, W)
-
         # 3. render the full face
         # require (1,1,3,H,W)   (1,T,3,H,W)  (1,N,3,H,W)   (1,N,3,H,W)  (1,1,1,h,w)
         # return  (1,3,H,W)
