@@ -69,8 +69,7 @@ def load_model(model, path):
 def swap_masked_region(target_img, src_img, mask): #function used in post-process
     """From src_img crop masked region to replace corresponding masked region
     in target_img
-    """  # swap_masked_region(src_frame, generated_frame, mask=mask_img)
-    print("Speed up swap masked region")
+    """
     target_img=torch.tensor(target_img).to(device=device).permute(2,0,1).unsqueeze(0) ##speed up
     src_img=torch.tensor(src_img).to(device=device).permute(2,0,1).unsqueeze(0) ##speed up
     mask=torch.tensor(mask).to(device=device,dtype=torch.float32).permute(2,0,1).unsqueeze(0) ##speed up
