@@ -119,7 +119,8 @@ def draw_landmarks(
                                      color=RED_COLOR),
     connection_drawing_spec: Union[DrawingSpec,
                                    Mapping[Tuple[int, int],
-                                           DrawingSpec]] = DrawingSpec()):
+                                           DrawingSpec]] = DrawingSpec(),
+    flag=None):
   """Draws the landmarks and the connections on the image.
 
   Args:
@@ -177,7 +178,10 @@ def draw_landmarks(
         cv2.line(image, idx_to_coordinates[start_idx],
                  idx_to_coordinates[end_idx], drawing_spec.color,
                  drawing_spec.thickness)
-  return image
+  if flag:
+    return image,idx_to_coordinates
+  else:
+    return image
   # Draws landmark points after finishing the connection lines, which is
   # aesthetically better.
   # if landmark_drawing_spec:

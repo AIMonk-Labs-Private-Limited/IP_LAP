@@ -12,15 +12,25 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 from pathlib import Path
 
+from PIL import Image
 
 # from gfpgan import GFPGANer
-from Fast import FAST_GFGGaner
-from ip_lap_tensorrt import FaceAlignment_trt
+# from Fast import FAST_GFGGaner
+# from ip_lap_tensorrt import FaceAlignment_trt
 
 import kornia
+from gfpgan.archs.gfpganv1_arch import GFPGANv1
+from kornia.geometry.transform import warp_affine
+from facexlib.parsing.parsenet import ParseNet
+
+import torchvision.transforms.functional as F
+from torchvision.utils import save_image
+from basicsr.utils import img2tensor, tensor2img
+from torchvision.transforms.functional import normalize
+from gfpgan.archs.gfpganv1_clean_arch import GFPGANv1Clean
 
 # defining face alignment object here so that process can access this global variable
-global_fa = FaceAlignment_trt(flip_input=False, device='cuda')
+# global_fa = FaceAlignment_trt(flip_input=False, device='cuda')
 model_inf_elapsed_time = 0
 postproc_elapsed_time = 0
 gfpgan_elapsed_time = 0
@@ -119,6 +129,7 @@ def reading(input_video_path,input_audio_path,temp_dir):
     elif input_video_path.split('.')[1] in ['jpg', 'png', 'jpeg']: #if input a single image for testing
         ori_background_frames = [cv2.imread(input_video_path)]
     else:
+        import pdb;pdb.set_trace()
         video_stream = cv2.VideoCapture(input_video_path)
         fps = video_stream.get(cv2.CAP_PROP_FPS)
         if fps != 25:
@@ -326,7 +337,7 @@ def draw_sketches(drawing_spec,lip_dist_idx,input_vid_len,face_crop_results,all_
         mediapipe_format_landmarks = [LandmarkDict(ori_sequence_idx[full_face_landmark_sequence[idx]], full_landmarks[0, idx],
                                                 full_landmarks[1, idx]) for idx in range(full_landmarks.shape[1])]
         drawn_sketech = draw_landmarks(drawn_sketech, mediapipe_format_landmarks, connections=FACEMESH_CONNECTION,
-                                    connection_drawing_spec=drawing_spec)
+                                    connection_drawing_spec=drawing_spec,flag=False)
         drawn_sketech = cv2.resize(drawn_sketech, (img_size, img_size))  # (128, 128, 3)
         ref_img_sketches.append(drawn_sketech)
     ref_img_sketches = torch.FloatTensor(np.asarray(ref_img_sketches) / 255.0).cuda().unsqueeze(0).permute(0, 1, 4, 2, 3)
@@ -353,75 +364,67 @@ def prepare_output_stream(ori_background_frames,temp_dir,mel_chunks,input_vid_le
 
     return frame_h,frame_w,out_stream,input_mel_chunks_len,input_frame_sequence
 
+def landmarks_to_tori_facecoords(lndmrks,shp,shp_out):
+    out=[]
+    i=[[133,33],[263,362],4,61,308]
+    for indx in i:
+        try:
+            resized_point=(int(lndmrks[indx][0]*(shp_out[0]/shp[1])),int(lndmrks[indx][1]*(shp_out[1]/shp[0])))
+        except:
+            resized_point=((int(((lndmrks[indx[0]][0]+lndmrks[indx[1]][0])/2)*(shp_out[0]/shp[1]))),int(((lndmrks[indx[0]][1]+lndmrks[indx[1]][1])/2)*(shp_out[1]/shp[0])))
+        out.append(resized_point)
+    
+    return np.array(out)
+
 def define_enhancer(method,bg_upsampler=None):
     print('face enhancer....')
-    # ------------------------ set up GFPGAN restorer ------------------------
-    if  method == 'gfpgan':
-        arch = 'clean'
-        channel_multiplier = 2
-        model_name = 'GFPGANv1.4'
-        url = 'https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth'
-    elif method == 'RestoreFormer':
-        arch = 'RestoreFormer'
-        channel_multiplier = 2
-        model_name = 'RestoreFormer'
-        url = 'https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/RestoreFormer.pth'
-    elif method == 'codeformer': # TODO:
-        arch = 'CodeFormer'
-        channel_multiplier = 2
-        model_name = 'CodeFormer'
-        url = 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth'
+    
+ 
+    channel_multiplier=2 ##hardcoded debugging purpose
+    device="cuda"
+    print(device)
+    gfpgan =GFPGANv1Clean(
+                    out_size=512,
+                    num_style_feat=512,
+                    channel_multiplier=channel_multiplier,
+                    decoder_load_path=None,
+                    fix_decoder=False,
+                    num_mlp=8,
+                    input_is_latent=True,
+                    different_w=True,
+                    narrow=1,
+                    sft_half=True)
+    model_path="/bv3/debasish_works/IP_LAP_v3_clean/GFPGANv1.4.pth"
+    loadnet = torch.load(model_path)
+    if 'params_ema' in loadnet:
+        keyname = 'params_ema'
     else:
-        raise ValueError(f'Wrong model version {method}.')
+        keyname = 'params'
+    gfpgan.load_state_dict(loadnet[keyname], strict=True)
+    gfpgan.eval()
+    gfpgan = gfpgan.to(device=device)
+    print("Loaded gfpgan")
+    # face_parse = ParseNet(in_size=512, out_size=512, parsing_ch=19)
+    # model_path="/bv3/debasish_works/IP_LAP_v2/parsing_parsenet.pth"
+    # load_net = torch.load(model_path, map_location=lambda storage, loc: storage)
+    # face_parse.load_state_dict(load_net, strict=True)
+    # face_parse.eval()
+    # face_parse = face_parse.to(device=device)
+    # print("Loaded parsenet")
     
-    # ------------------------ set up background upsampler ------------------------
-    if bg_upsampler == 'realesrgan':
-        if not torch.cuda.is_available():  # CPU
-            import warnings
-            warnings.warn('The unoptimized RealESRGAN is slow on CPU. We do not use it. '
-                          'If you really want to use it, please modify the corresponding codes.')
-            bg_upsampler = None
-        else:
-            from basicsr.archs.rrdbnet_arch import RRDBNet
-            from realesrgan import RealESRGANer
-            model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=2)
-            bg_upsampler = RealESRGANer(
-                scale=2,
-                model_path='https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth',
-                model=model,
-                tile=400,
-                tile_pad=10,
-                pre_pad=0,
-                half=True)  # need to set False in CPU mode
-    else:
-        bg_upsampler = None
-        
-    # determine model paths
-    # determine model paths
-    model_path = os.path.join(GFPGAN_CKPT_PATH, model_name + '.pth')
-     
-    if not os.path.isfile(model_path):
-        model_path = os.path.join('checkpoints', model_name + '.pth')
-        
-    if not os.path.isfile(model_path):
-        # download pre-trained models from url
-        model_path = url
-    
-    # restorer = GFPGANer(
-    #     model_path=model_path,
-    #     upscale=1,
-    #     arch=arch,
-    #     channel_multiplier=channel_multiplier,
-    #     bg_upsampler=bg_upsampler)
-    fast_restorer=FAST_GFGGaner(
-        model_path=model_path,
-        upscale=1,
-        arch=arch,
-        channel_multiplier=channel_multiplier,
-        bg_upsampler=bg_upsampler)   
-    
-    
-    return fast_restorer
+    return gfpgan
+
+def define_parser():
+    print("parsenet parser")
+    model_path="/bv3/debasish_works/IP_LAP_v2/parsing_parsenet.pth"
+    face_parse = ParseNet(in_size=512, out_size=512, parsing_ch=19)
+    load_net = torch.load(model_path, map_location=lambda storage, loc: storage)
+    face_parse.load_state_dict(load_net, strict=True)
+    face_parse.eval()
+    face_parse = face_parse.to(device=device)
+    print("Loaded parsenet")
+    return face_parse
+
 
 def model_inference_process(input_queue, output_queue, 
                             landmark_generator_model, renderer, drawing_spec,
@@ -436,7 +439,7 @@ def model_inference_process(input_queue, output_queue,
         start_time = time.time()
         
         (T_input_frame, T_ori_face_coordinates, T_mel_batch, T_crop_face, T_pose_landmarks, Nl_pose, 
-            Nl_content, frame_w, frame_h, ref_imgs, ref_img_sketches, batch_idx) = data
+            Nl_content, frame_w, frame_h, ref_imgs, ref_img_sketches,avatar_name, batch_idx) = data
         
         # reset elapsed time
         if batch_idx == 0:
@@ -471,11 +474,14 @@ def model_inference_process(input_queue, output_queue,
             mediapipe_format_landmarks = [LandmarkDict(ori_sequence_idx[full_face_landmark_sequence[idx]]
                                                     , full_landmarks[0, idx], full_landmarks[1, idx]) for idx in
                                         range(full_landmarks.shape[1])]
-            drawn_sketech = draw_landmarks(drawn_sketech, mediapipe_format_landmarks, connections=FACEMESH_CONNECTION,
-                                        connection_drawing_spec=drawing_spec)
+            drawn_sketech,lndmrks = draw_landmarks(drawn_sketech, mediapipe_format_landmarks, connections=FACEMESH_CONNECTION,
+                                        connection_drawing_spec=drawing_spec,flag=True)
+            shp=drawn_sketech.shape
             drawn_sketech = cv2.resize(drawn_sketech, (img_size, img_size))  # (128, 128, 3)
             if frame_idx == 2:
                 show_sketch = cv2.resize(drawn_sketech, (frame_w, frame_h)).astype(np.uint8)
+                final_lndmrks=lndmrks
+                shp_=shp
             T_target_sketches.append(torch.FloatTensor(drawn_sketech) / 255)
         
         T_target_sketches = torch.stack(T_target_sketches, dim=0).permute(0, 3, 1, 2)  # (T,3,128, 128)
@@ -492,7 +498,7 @@ def model_inference_process(input_queue, output_queue,
                                                         T_mels[:, 2].unsqueeze(0))  # T=1
         gen_face = (generated_face.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)  # (H,W,3)
         
-        output_queue.put((gen_face, T_ori_face_coordinates, T_input_frame, batch_idx))
+        output_queue.put((gen_face, T_ori_face_coordinates,final_lndmrks,shp_, T_input_frame,avatar_name, batch_idx))
         
         elpased_time = time.time() - start_time
         # aquire lock for read write operations
@@ -502,13 +508,15 @@ def model_inference_process(input_queue, output_queue,
         # print(f"Model inf completed for batch idx: {batch_idx}, "
         #       f"Model inf elpased time: {model_inf_elapsed_time}")
     
+global_parsenet=define_parser()   
 def postprocessing_process(input_queue, output_queue, mp_lock, postproc_elapsed_time):
     # this function should be run as daemon process only as it does not handle
     # exiting inside infinite loop. Daemon process will be completed once its parents
     # process also gets completed in this case.
     # with mp_lock:
     #     print("postproc start time: ", time.time())
-    global global_fa
+    # global global_fa
+    global global_parsenet
     #print("Is global_fa None: ", global_fa is None)
     print("post processing process ready")
     while True:
@@ -516,22 +524,22 @@ def postprocessing_process(input_queue, output_queue, mp_lock, postproc_elapsed_
         
         start_time = time.time()
         
-        gen_face, T_ori_face_coordinates, T_input_frame, batch_idx = input_data
-        
+        # gen_face, T_ori_face_coordinates, T_input_frame, batch_idx = input_data
+        # print("length of input data : ",len(input_data))
+        T_input_frame,original_background,gen_face_numpy,inverse_affine,avatar_name,batch_idx=input_data
         # reset elapsed time
         if batch_idx == 0:
             postproc_elapsed_time.value = 0
 
-        # 4. paste each generated face
-        y1, y2, x1, x2 = T_ori_face_coordinates[2][1]  # coordinates of face bounding box
-        original_background = T_input_frame[2].copy()
-        T_input_frame[2][y1:y2, x1:x2] = cv2.resize(gen_face,(x2 - x1, y2 - y1))  #resize and paste generated face
+        # 4. paste each generated face        
+        frame=paste_faces_to_input_image(input_img=T_input_frame[2].copy(),back_ground_img=original_background.copy(),restored_face=gen_face_numpy,inverse_affine=inverse_affine,face_parse=global_parsenet,avatar_name=avatar_name,idx__=batch_idx)
+
         # 5. post-process
         # full_imgs.append(merge_face_contour_only(original_background, T_input_frame[frame_idx], T_ori_face_coordinates[frame_idx][1],fa))   #(H,W,3)
-        full = merge_face_contour_only(original_background, T_input_frame[2], T_ori_face_coordinates[2][1], global_fa)   #(H,W,3
+        # full = merge_face_contour_only(original_background, T_input_frame[2], T_ori_face_coordinates[2][1], global_fa)   #(H,W,3
         
         # full = np.concatenate([show_sketch, full], axis=1)
-        output_queue.put((full, batch_idx))
+        output_queue.put((frame, batch_idx))
         elapsed_time = time.time() - start_time
         # aquire lock for read write operations
         with postproc_elapsed_time.get_lock():
@@ -541,36 +549,168 @@ def postprocessing_process(input_queue, output_queue, mp_lock, postproc_elapsed_
         #     print(f"post processing completed for {batch_idx} "
         #           f"post processing elapsed time {postproc_elapsed_time}")
 
+def paste_faces_to_input_image(input_img,back_ground_img,restored_face,inverse_affine,face_parse,device="cuda",save_path=None,avatar_name=None, upsample_img=None,idx__=None):
+    # import pdb;pdb.set_trace()
+    # folder="/bv3/debasish_works/IP_LAP_v3"
+    h, w, _ = input_img.shape
+    upscale_factor=1
+    h_up, w_up = int(h * upscale_factor), int(w * upscale_factor)
+    avatar=avatar_name
+    avatar_name=str(Path(avatar).stem)
+    # save_mask_path=f"{folder}/saved_mask/{avatar_name}"
+    save_mask_path=f"saved_mask/{avatar_name}"
+    # save_mask_path_file=f"saved_mask/{avatar_name}/{idx__}.tiff"
+    save_mask_path_file=f"saved_mask/{avatar_name}/{idx__}.jpg"
+
+    if not os.path.isdir(save_mask_path):
+        os.makedirs(f"saved_mask/{avatar_name}",exist_ok=True)
+
+    if upsample_img is None:
+        # simply resize the background
+        upsample_img = cv2.resize(input_img, (w_up, h_up), interpolation=cv2.INTER_LANCZOS4)
+        upsample_org_back_img=cv2.resize(back_ground_img, (w_up, h_up), interpolation=cv2.INTER_LANCZOS4)
+    else:
+        upsample_img = cv2.resize(upsample_img, (w_up, h_up), interpolation=cv2.INTER_LANCZOS4)
+        upsample_org_back_img=cv2.resize(back_ground_img, (w_up, h_up), interpolation=cv2.INTER_LANCZOS4)
+        
+    if upscale_factor > 1:
+        extra_offset = 0.5 * upscale_factor
+    else:
+        extra_offset = 0
+    inverse_affine[:, 2] += extra_offset
+    inv_restored = cv2.warpAffine(restored_face, inverse_affine, (w_up, h_up))
+    # os.makedirs("inverse_affine",exist_ok=True)
+    # cv2.imwrite(f"inverse_affine/{idx__}.jpg",inv_restored.copy())
+    if not os.path.exists(save_mask_path_file):
+        # if not os.path.isdir(save_mask_path):
+        print("Running for first time")
+        face_input = cv2.resize(restored_face, (512, 512), interpolation=cv2.INTER_LINEAR)
+        face_input = img2tensor(face_input.astype('float32') / 255., bgr2rgb=True, float32=True)
+        normalize(face_input, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5), inplace=True)
+        face_input = torch.unsqueeze(face_input, 0).to(device)
+        with torch.no_grad():
+            out = face_parse(face_input)[0]
+        # out = out.argmax(dim=1).squeeze().cpu().numpy()
+        out = out.argmax(dim=1).squeeze()
+        # mask = np.zeros(out.shape)
+        mask = torch.zeros_like(out)
+        MASK_COLORMAP = [0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 255, 0, 0, 0]
+        for idx, color in enumerate(MASK_COLORMAP):
+            mask[out == idx] = color
+            
+        ##save the mask
+        # avatar_name=""
+        os.makedirs(f"saved_mask/{avatar_name}",exist_ok=True)
+        # cv2.imwrite(f"saved_mask/{avatar_name}/{idx__}.jpg",mask.copy())
+        save_image(mask.float(), f"saved_mask/{avatar_name}/{idx__}.jpg")
+        mask=mask.unsqueeze(0).unsqueeze(0).float()
+    else:
+        print("already Ran")
+        # import pdb;pdb.set_trace()
+        mask = np.asarray(Image.open(f"saved_mask/{avatar_name}/{idx__}.jpg").convert('L'))
+        mask=torch.tensor(mask).to(device=device).unsqueeze(2)
+        
+        mask=mask.permute(2,0,1)
+        mask=mask.unsqueeze(0).float()
+        # import pdb;pdb.set_trace()
+    # import pdb;pdb.set_trace()
+    gauss = kornia.filters.GaussianBlur2d((101, 101),(11,11))
+    # mask=mask.unsqueeze(0).unsqueeze(0).float()
+    mask=gauss(mask)
+    # mask = cv2.GaussianBlur(mask, (101, 101), 11)
+    # mask = cv2.GaussianBlur(mask, (101, 101), 11)
+    # remove the black borders
+    thres = 10
+    mask[:,:,:thres, :] = 0  ##speed up part
+    mask[:,:,-thres:, :] = 0  ##speed up part
+    mask[:,:,:, :thres] = 0  ##speed up part
+    mask[:,:,:, -thres:] = 0  ##speed up part
+    mask = mask / 255.   ##speed up part
+    # mask[:thres, :] = 0
+    # mask[-thres:, :] = 0
+    # mask[:, :thres] = 0
+    # mask[:, -thres:] = 0
+    # mask = mask / 255.
+    mask=F.resize(mask,size=restored_face.shape[:2])
+    
+    # mask = cv2.resize(mask, restored_face.shape[:2])
+    inverse_affine=torch.tensor(inverse_affine).to(device=device).unsqueeze(0)
+    inverse_affine=inverse_affine.to(dtype=torch.float32)
+    mask=kornia.geometry.transform.warp_affine(mask,inverse_affine,(h_up, w_up))
+    mask=mask.squeeze(0).squeeze(0)
+    inv_soft_mask=mask.unsqueeze(2) 
+    # mask = cv2.warpAffine(mask, inverse_affine, (w_up, h_up), flags=3)
+    # inv_soft_mask = mask[:, :, None]
+    pasted_face = inv_restored
+    
+    if len(upsample_img.shape) == 3 and upsample_img.shape[2] == 4:  # alpha channel
+        alpha = upsample_img[:, :, 3:]
+        upsample_img = inv_soft_mask * pasted_face + (1 - inv_soft_mask) * upsample_img[:, :, 0:3]
+        upsample_img = np.concatenate((upsample_img, alpha), axis=2)
+    else:
+        pasted_face=torch.tensor(pasted_face).to(device)
+        print(device)
+        upsample_img=torch.tensor(upsample_img).to(device)
+        upsample_org_back_img=torch.tensor(upsample_org_back_img).to(device)
+        # import pdb;pdb.set_trace()
+        upsample_img = inv_soft_mask * pasted_face + (1 - inv_soft_mask) * upsample_org_back_img
+        upsample_img=torch.tensor(upsample_img).cpu().numpy()
+        
+    
+    if np.max(upsample_img) > 256:  # 16-bit image
+        upsample_img = upsample_img.astype(np.uint16)
+    else:
+        upsample_img = upsample_img.astype(np.uint8)
+    return upsample_img
+
+
 # this object is defined here so that face_enhancer_process() process can access
 # it as a global variable. It can not be defined at the top of file as 
 # define_enhancer() is only defined in middle of the file
-global_restorer = define_enhancer(method='gfpgan')
+global_gfpgan= define_enhancer(method='gfpgan')
+
 def face_enhancer_process(input_queue, output_queue, gfpgan_elapsed_time):
-    global global_restorer
+    # global global_restorer
+    global global_gfpgan
     print("Face enhancer process ready")
     while True:
         input_data = input_queue.get()
         start_time = time.time()
-        frame, batch_idx = input_data
-        
+        # frame, batch_idx = input_data
+        gen_face, T_ori_face_coordinates,final_lndmrks,shp_, T_input_frame,avatar_name, batch_idx=input_data
         # reset elapsed time
         if batch_idx == 0:
             gfpgan_elapsed_time.value = 0
         
-        _, _, frame = global_restorer.enhance(frame, has_aligned=False, only_center_face=False, paste_back=True)
-        
-        output_queue.put((frame, batch_idx))
+        # _, _, frame = global_restorer.enhance(frame, has_aligned=False, only_center_face=False, paste_back=True)
+        y1, y2, x1, x2 = T_ori_face_coordinates[2][1]  # coordinates of face bounding box
+        original_background = T_input_frame[2].copy()
+        T_input_frame[2][y1:y2, x1:x2] = cv2.resize(gen_face,(x2 - x1, y2 - y1))  #resize and paste generated face
+        landmarks_on_large_image=landmarks_to_tori_facecoords(final_lndmrks,shp_,(x2-x1,y2-y1))
+        landmarks_on_large_image+=np.array([x1,y1])
+        face_template=np.array([[192.98138, 239.94708], [318.90277, 240.1936], [256.63416, 314.01935],
+                                           [201.26117, 371.41043], [313.08905, 371.15118]])
+        affine_matrix=cv2.estimateAffinePartial2D(landmarks_on_large_image,face_template,method=cv2.LMEDS)[0]
+        border_mode=cv2.BORDER_CONSTANT
+        cropped_face=cv2.warpAffine(T_input_frame[2].copy(),affine_matrix,(512,512),borderMode=border_mode,borderValue=(135,133,132))
+        gen_face_512_t=img2tensor(cropped_face.copy()/255.,bgr2rgb=True,float32=True)
+        normalize(gen_face_512_t,(0.5,0.5,0.5),(0.5,0.5,0.5),inplace=True)
+        gen_face_512_t=gen_face_512_t.unsqueeze(0).to(device=device)
+        output = global_gfpgan(gen_face_512_t, return_rgb=False, weight=0.5)[0]
+        gen_face_numpy=tensor2img(output.squeeze(0), rgb2bgr=True, min_max=(-1, 1))
+        gen_face_numpy = gen_face_numpy.astype('uint8')
+        inverse_affine = cv2.invertAffineTransform(affine_matrix)
+        inverse_affine *= 1
+        output_queue.put((T_input_frame,original_background,gen_face_numpy,inverse_affine,avatar_name,batch_idx))
+        # output_queue.put((frame, batch_idx))
         elapsed_time = time.time() - start_time
         # aquire lock for read write operations
         with gfpgan_elapsed_time.get_lock():
             gfpgan_elapsed_time.value += elapsed_time
-        
-        # print(f"face enhancer completed for {batch_idx} "
-        #       f"face enhancer elapsed time {gfpgan_elapsed_time}")
     
 def global_render_loop(input_queue, output_queue, input_mel_chunks_len, mel_chunks,input_frame_sequence, face_crop_results, 
                        all_pose_landmarks, ori_background_frames,frame_w, frame_h, ref_imgs, ref_img_sketches, Nl_content, 
-                       Nl_pose, out_stream, input_audio_path, temp_dir, outfile_path):
+                       Nl_pose, out_stream, input_audio_path, temp_dir, outfile_path,avatar_name):
     # torch tensor: ref_imgs, ref_img_sketches, Nl_content, Nl_pose
     
     # move tensor storage to shared memory
@@ -604,7 +744,7 @@ def global_render_loop(input_queue, output_queue, input_mel_chunks_len, mel_chun
             
         input_queue_data = (
             T_input_frame, T_ori_face_coordinates, T_mel_batch, T_crop_face, T_pose_landmarks, Nl_pose, 
-            Nl_content, frame_w, frame_h, ref_imgs, ref_img_sketches, batch_idx
+            Nl_content, frame_w, frame_h, ref_imgs, ref_img_sketches,avatar_name, batch_idx
         )
         #print("Adding input for batch idx: ", batch_idx)
         input_queue.put(input_queue_data)

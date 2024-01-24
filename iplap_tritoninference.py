@@ -80,23 +80,25 @@ class IPLAP_tritoninference:
             daemon=True     # will get exited automatically once main process is completed/killed
         )
         
-        self.postproc_process = multiprocessing.Process(
-            target=postprocessing_process,
-            args=(self.inf_postproc_queue, self.postproc_enh_queue, self.mp_lock, self.post_proc_time),
-            daemon=True     # will get exited automatically once main process is completed/killed
-        )
         
         self.face_enhancer_process = multiprocessing.Process(
             target=face_enhancer_process,
-            args=(self.postproc_enh_queue, self.output_queue, self.face_enhc_time),
+            args=(self.inf_postproc_queue, self.postproc_enh_queue, self.face_enhc_time),
             daemon=True
         )
         
+        self.postproc_process = multiprocessing.Process(
+            target=postprocessing_process,
+            args=(self.postproc_enh_queue, self.output_queue, self.mp_lock, self.post_proc_time),
+            daemon=True     # will get exited automatically once main process is completed/killed
+        )
+        
+        
         self.model_inf_process.start()
-        self.postproc_process.start()
         self.face_enhancer_process.start()
+        self.postproc_process.start()
     
-    def infer(self,input_video_path,input_audio_path,temp_dir,bgremoval):
+    def infer(self,input_video_path,input_audio_path,temp_dir,bgremoval,avatar_name):
 
         # result_out_dir = os.path.dirname(temp_dir)
         t0 = time.time()
@@ -128,7 +130,7 @@ class IPLAP_tritoninference:
             self.input_queue, self.output_queue, input_mel_chunks_len, mel_chunks, 
             input_frame_sequence, face_crop_results, all_pose_landmarks, ori_background_frames,
             frame_w, frame_h, ref_imgs, ref_img_sketches, Nl_content, Nl_pose, 
-            out_stream, input_audio_path, temp_dir, outfile_path
+            out_stream, input_audio_path, temp_dir, outfile_path,avatar_name
         )
 
         timing_dict = {
