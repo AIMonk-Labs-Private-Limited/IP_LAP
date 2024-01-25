@@ -130,7 +130,7 @@ class IPLAP_tritoninference:
             self.input_queue, self.output_queue, input_mel_chunks_len, mel_chunks, 
             input_frame_sequence, face_crop_results, all_pose_landmarks, ori_background_frames,
             frame_w, frame_h, ref_imgs, ref_img_sketches, Nl_content, Nl_pose, 
-            out_stream, input_audio_path, temp_dir, outfile_path,avatar_name
+            out_stream, input_audio_path, temp_dir, outfile_path,avatar_name,input_vid_len
         )
 
         timing_dict = {

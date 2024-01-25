@@ -13,7 +13,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 from pathlib import Path
 
 from PIL import Image
-
+import shutil
 # from gfpgan import GFPGANer
 # from Fast import FAST_GFGGaner
 # from ip_lap_tensorrt import FaceAlignment_trt
@@ -129,7 +129,6 @@ def reading(input_video_path,input_audio_path,temp_dir):
     elif input_video_path.split('.')[1] in ['jpg', 'png', 'jpeg']: #if input a single image for testing
         ori_background_frames = [cv2.imread(input_video_path)]
     else:
-        import pdb;pdb.set_trace()
         video_stream = cv2.VideoCapture(input_video_path)
         fps = video_stream.get(cv2.CAP_PROP_FPS)
         if fps != 25:
@@ -439,7 +438,7 @@ def model_inference_process(input_queue, output_queue,
         start_time = time.time()
         
         (T_input_frame, T_ori_face_coordinates, T_mel_batch, T_crop_face, T_pose_landmarks, Nl_pose, 
-            Nl_content, frame_w, frame_h, ref_imgs, ref_img_sketches,avatar_name, batch_idx) = data
+            Nl_content, frame_w, frame_h, ref_imgs, ref_img_sketches,avatar_name,input_vid_len,loopth, batch_idx) = data
         
         # reset elapsed time
         if batch_idx == 0:
@@ -498,7 +497,7 @@ def model_inference_process(input_queue, output_queue,
                                                         T_mels[:, 2].unsqueeze(0))  # T=1
         gen_face = (generated_face.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)  # (H,W,3)
         
-        output_queue.put((gen_face, T_ori_face_coordinates,final_lndmrks,shp_, T_input_frame,avatar_name, batch_idx))
+        output_queue.put((gen_face, T_ori_face_coordinates,final_lndmrks,shp_, T_input_frame,avatar_name,input_vid_len,loopth, batch_idx))
         
         elpased_time = time.time() - start_time
         # aquire lock for read write operations
@@ -526,13 +525,13 @@ def postprocessing_process(input_queue, output_queue, mp_lock, postproc_elapsed_
         
         # gen_face, T_ori_face_coordinates, T_input_frame, batch_idx = input_data
         # print("length of input data : ",len(input_data))
-        T_input_frame,original_background,gen_face_numpy,inverse_affine,avatar_name,batch_idx=input_data
+        T_input_frame,original_background,gen_face_numpy,inverse_affine,avatar_name,input_vid_len,loopth,batch_idx=input_data
         # reset elapsed time
         if batch_idx == 0:
             postproc_elapsed_time.value = 0
 
         # 4. paste each generated face        
-        frame=paste_faces_to_input_image(input_img=T_input_frame[2].copy(),back_ground_img=original_background.copy(),restored_face=gen_face_numpy,inverse_affine=inverse_affine,face_parse=global_parsenet,avatar_name=avatar_name,idx__=batch_idx)
+        frame=paste_faces_to_input_image(input_img=T_input_frame[2].copy(),back_ground_img=original_background.copy(),restored_face=gen_face_numpy,inverse_affine=inverse_affine,face_parse=global_parsenet,avatar_name=avatar_name,idx__=batch_idx,input_vid_len=input_vid_len,loopth=loopth)
 
         # 5. post-process
         # full_imgs.append(merge_face_contour_only(original_background, T_input_frame[frame_idx], T_ori_face_coordinates[frame_idx][1],fa))   #(H,W,3)
@@ -549,8 +548,7 @@ def postprocessing_process(input_queue, output_queue, mp_lock, postproc_elapsed_
         #     print(f"post processing completed for {batch_idx} "
         #           f"post processing elapsed time {postproc_elapsed_time}")
 
-def paste_faces_to_input_image(input_img,back_ground_img,restored_face,inverse_affine,face_parse,device="cuda",save_path=None,avatar_name=None, upsample_img=None,idx__=None):
-    # import pdb;pdb.set_trace()
+def paste_faces_to_input_image(input_img,back_ground_img,restored_face,inverse_affine,face_parse,device="cuda",save_path=None,avatar_name=None, upsample_img=None,idx__=None,input_vid_len=0,loopth=0):
     # folder="/bv3/debasish_works/IP_LAP_v3"
     h, w, _ = input_img.shape
     upscale_factor=1
@@ -581,7 +579,7 @@ def paste_faces_to_input_image(input_img,back_ground_img,restored_face,inverse_a
     inv_restored = cv2.warpAffine(restored_face, inverse_affine, (w_up, h_up))
     # os.makedirs("inverse_affine",exist_ok=True)
     # cv2.imwrite(f"inverse_affine/{idx__}.jpg",inv_restored.copy())
-    if not os.path.exists(save_mask_path_file):
+    if not os.path.exists(save_mask_path_file) and loopth==0:
         # if not os.path.isdir(save_mask_path):
         print("Running for first time")
         face_input = cv2.resize(restored_face, (512, 512), interpolation=cv2.INTER_LINEAR)
@@ -606,19 +604,19 @@ def paste_faces_to_input_image(input_img,back_ground_img,restored_face,inverse_a
         mask=mask.unsqueeze(0).unsqueeze(0).float()
     else:
         print("already Ran")
-        # import pdb;pdb.set_trace()
-        mask = np.asarray(Image.open(f"saved_mask/{avatar_name}/{idx__}.jpg").convert('L'))
+
+        if loopth%2==0:
+            num=idx__%(input_vid_len)
+        else:
+            num=(input_vid_len - idx__ % (input_vid_len))-1
+        mask = np.asarray(Image.open(f"saved_mask/{avatar_name}/{num}.jpg").convert('L'))
         mask=torch.tensor(mask).to(device=device).unsqueeze(2)
         
         mask=mask.permute(2,0,1)
         mask=mask.unsqueeze(0).float()
-        # import pdb;pdb.set_trace()
-    # import pdb;pdb.set_trace()
     gauss = kornia.filters.GaussianBlur2d((101, 101),(11,11))
-    # mask=mask.unsqueeze(0).unsqueeze(0).float()
     mask=gauss(mask)
-    # mask = cv2.GaussianBlur(mask, (101, 101), 11)
-    # mask = cv2.GaussianBlur(mask, (101, 101), 11)
+
     # remove the black borders
     thres = 10
     mask[:,:,:thres, :] = 0  ##speed up part
@@ -639,8 +637,7 @@ def paste_faces_to_input_image(input_img,back_ground_img,restored_face,inverse_a
     mask=kornia.geometry.transform.warp_affine(mask,inverse_affine,(h_up, w_up))
     mask=mask.squeeze(0).squeeze(0)
     inv_soft_mask=mask.unsqueeze(2) 
-    # mask = cv2.warpAffine(mask, inverse_affine, (w_up, h_up), flags=3)
-    # inv_soft_mask = mask[:, :, None]
+
     pasted_face = inv_restored
     
     if len(upsample_img.shape) == 3 and upsample_img.shape[2] == 4:  # alpha channel
@@ -652,7 +649,6 @@ def paste_faces_to_input_image(input_img,back_ground_img,restored_face,inverse_a
         print(device)
         upsample_img=torch.tensor(upsample_img).to(device)
         upsample_org_back_img=torch.tensor(upsample_org_back_img).to(device)
-        # import pdb;pdb.set_trace()
         upsample_img = inv_soft_mask * pasted_face + (1 - inv_soft_mask) * upsample_org_back_img
         upsample_img=torch.tensor(upsample_img).cpu().numpy()
         
@@ -677,7 +673,7 @@ def face_enhancer_process(input_queue, output_queue, gfpgan_elapsed_time):
         input_data = input_queue.get()
         start_time = time.time()
         # frame, batch_idx = input_data
-        gen_face, T_ori_face_coordinates,final_lndmrks,shp_, T_input_frame,avatar_name, batch_idx=input_data
+        gen_face, T_ori_face_coordinates,final_lndmrks,shp_, T_input_frame,avatar_name,input_vid_len,loopth, batch_idx=input_data
         # reset elapsed time
         if batch_idx == 0:
             gfpgan_elapsed_time.value = 0
@@ -691,8 +687,7 @@ def face_enhancer_process(input_queue, output_queue, gfpgan_elapsed_time):
         face_template=np.array([[192.98138, 239.94708], [318.90277, 240.1936], [256.63416, 314.01935],
                                            [201.26117, 371.41043], [313.08905, 371.15118]])
         affine_matrix=cv2.estimateAffinePartial2D(landmarks_on_large_image,face_template,method=cv2.LMEDS)[0]
-        border_mode=cv2.BORDER_CONSTANT
-        cropped_face=cv2.warpAffine(T_input_frame[2].copy(),affine_matrix,(512,512),borderMode=border_mode,borderValue=(135,133,132))
+        cropped_face=cv2.warpAffine(T_input_frame[2].copy(),affine_matrix,(512,512),borderMode=cv2.BORDER_CONSTANT,borderValue=(135,133,132))
         gen_face_512_t=img2tensor(cropped_face.copy()/255.,bgr2rgb=True,float32=True)
         normalize(gen_face_512_t,(0.5,0.5,0.5),(0.5,0.5,0.5),inplace=True)
         gen_face_512_t=gen_face_512_t.unsqueeze(0).to(device=device)
@@ -701,7 +696,7 @@ def face_enhancer_process(input_queue, output_queue, gfpgan_elapsed_time):
         gen_face_numpy = gen_face_numpy.astype('uint8')
         inverse_affine = cv2.invertAffineTransform(affine_matrix)
         inverse_affine *= 1
-        output_queue.put((T_input_frame,original_background,gen_face_numpy,inverse_affine,avatar_name,batch_idx))
+        output_queue.put((T_input_frame,original_background,gen_face_numpy,inverse_affine,avatar_name,input_vid_len,loopth,batch_idx))
         # output_queue.put((frame, batch_idx))
         elapsed_time = time.time() - start_time
         # aquire lock for read write operations
@@ -710,7 +705,7 @@ def face_enhancer_process(input_queue, output_queue, gfpgan_elapsed_time):
     
 def global_render_loop(input_queue, output_queue, input_mel_chunks_len, mel_chunks,input_frame_sequence, face_crop_results, 
                        all_pose_landmarks, ori_background_frames,frame_w, frame_h, ref_imgs, ref_img_sketches, Nl_content, 
-                       Nl_pose, out_stream, input_audio_path, temp_dir, outfile_path,avatar_name):
+                       Nl_pose, out_stream, input_audio_path, temp_dir, outfile_path,avatar_name,input_vid_len):
     # torch tensor: ref_imgs, ref_img_sketches, Nl_content, Nl_pose
     
     # move tensor storage to shared memory
@@ -724,10 +719,12 @@ def global_render_loop(input_queue, output_queue, input_mel_chunks_len, mel_chun
 
     start_time = time.time()
     # put inputs into queue
+    input_vid_len=input_vid_len-6
+    
     for batch_idx, batch_start_idx in enumerate(range(0, total_iterations, 1)):
         T_input_frame, T_ori_face_coordinates = [], []
         T_mel_batch, T_crop_face,T_pose_landmarks = [], [],[]
-        
+        loopth=(batch_idx)//input_vid_len
         for mel_chunk_idx in range(batch_start_idx, batch_start_idx + T):  # for each T frame
             # 1 input audio
             T_mel_batch.append(mel_chunks[max(0, mel_chunk_idx - 2)])
@@ -744,7 +741,7 @@ def global_render_loop(input_queue, output_queue, input_mel_chunks_len, mel_chun
             
         input_queue_data = (
             T_input_frame, T_ori_face_coordinates, T_mel_batch, T_crop_face, T_pose_landmarks, Nl_pose, 
-            Nl_content, frame_w, frame_h, ref_imgs, ref_img_sketches,avatar_name, batch_idx
+            Nl_content, frame_w, frame_h, ref_imgs, ref_img_sketches,avatar_name,input_vid_len,loopth, batch_idx
         )
         #print("Adding input for batch idx: ", batch_idx)
         input_queue.put(input_queue_data)
@@ -773,7 +770,7 @@ def global_render_loop(input_queue, output_queue, input_mel_chunks_len, mel_chun
         if output_batch_idx == 0:
             out_stream.write(frame)
             out_stream.write(frame)
-        
+            
         # when output data's index matches last input's index, we break out of loop 
         if output_batch_idx == batch_idx:
             break
@@ -783,6 +780,7 @@ def global_render_loop(input_queue, output_queue, input_mel_chunks_len, mel_chun
     render_loop_time = time.time() - start_time
         
     out_stream.release()
+    shutil.copy('{}/result.avi'.format(temp_dir),"/bv3/debasish_works")
     command = 'ffmpeg -y -i {} -i {} -b:v 10M -strict -2 -q:v 1 {}'.format(input_audio_path, '{}/result.avi'.format(temp_dir), outfile_path)
     subprocess.call(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     print("succeed output results to:", outfile_path)
