@@ -38,9 +38,14 @@ gfpgan_elapsed_time = 0
 GFPGAN_CKPT_PATH = os.path.join(
     # path to the dir that contains checkpoint dir
     str(Path(os.path.dirname(os.path.abspath(__file__))).parent),
-    "checkpoints"
+    "checkpoints","GFPGANv1.4.pth"
 )
 print(GFPGAN_CKPT_PATH)
+PARSENET_CKPT_PATH = os.path.join(
+    # path to the dir that contains checkpoint dir
+    str(Path(os.path.dirname(os.path.abspath(__file__))).parent),
+    "checkpoints","parsing_parsenet.pth"
+)
 class LandmarkDict(dict):# Makes a dictionary that behave like an object to represent each landmark
     def __init__(self, idx, x, y):
         self['idx'] = idx
@@ -393,7 +398,7 @@ def define_enhancer(method,bg_upsampler=None):
                     different_w=True,
                     narrow=1,
                     sft_half=True)
-    model_path="/bv3/debasish_works/IP_LAP_v3_clean/GFPGANv1.4.pth"
+    model_path=GFPGAN_CKPT_PATH
     loadnet = torch.load(model_path)
     if 'params_ema' in loadnet:
         keyname = 'params_ema'
@@ -403,19 +408,12 @@ def define_enhancer(method,bg_upsampler=None):
     gfpgan.eval()
     gfpgan = gfpgan.to(device=device)
     print("Loaded gfpgan")
-    # face_parse = ParseNet(in_size=512, out_size=512, parsing_ch=19)
-    # model_path="/bv3/debasish_works/IP_LAP_v2/parsing_parsenet.pth"
-    # load_net = torch.load(model_path, map_location=lambda storage, loc: storage)
-    # face_parse.load_state_dict(load_net, strict=True)
-    # face_parse.eval()
-    # face_parse = face_parse.to(device=device)
-    # print("Loaded parsenet")
     
     return gfpgan
 
 def define_parser():
     print("parsenet parser")
-    model_path="/bv3/debasish_works/IP_LAP_v2/parsing_parsenet.pth"
+    model_path=PARSENET_CKPT_PATH
     face_parse = ParseNet(in_size=512, out_size=512, parsing_ch=19)
     load_net = torch.load(model_path, map_location=lambda storage, loc: storage)
     face_parse.load_state_dict(load_net, strict=True)
