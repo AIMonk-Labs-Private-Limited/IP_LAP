@@ -707,6 +707,21 @@ def global_render_loop(input_queue, output_queue, input_mel_chunks_len, mel_chun
                        all_pose_landmarks, ori_background_frames,frame_w, frame_h, ref_imgs, ref_img_sketches, Nl_content, 
                        Nl_pose, out_stream, input_audio_path, temp_dir, outfile_path,avatar_name,input_vid_len):
     # torch tensor: ref_imgs, ref_img_sketches, Nl_content, Nl_pose
+    def _write_to_outstream_from_output_queue():
+        data = output_queue.get()
+        frame, output_batch_idx = data
+        # print(f'output_batch_idx: ', output_batch_idx, ' batch_idx: ', batch_idx)
+        
+        out_stream.write(frame)
+        progress_bar.update(1)
+        if output_batch_idx == 0:
+            out_stream.write(frame)
+            out_stream.write(frame)
+
+        # when output data's index matches last input's index, we break out of loop 
+        if output_batch_idx == batch_idx:
+            return True
+        return False
     
     # move tensor storage to shared memory
     ref_imgs = ref_imgs.share_memory_()
@@ -750,31 +765,16 @@ def global_render_loop(input_queue, output_queue, input_mel_chunks_len, mel_chun
         # and write any output frame if available. It make sure pipeline doesn't
         # remain blocked.
         if not output_queue.empty():
-            data = output_queue.get()
-            frame, output_batch_idx = data
-            
-            out_stream.write(frame)
-            progress_bar.update(1)
-            if output_batch_idx == 0:
-                out_stream.write(frame)
-                out_stream.write(frame)
-            
+            _write_to_outstream_from_output_queue()
     
     # Wait for remaining outputs from queue and write them to file
     while True:
-        data = output_queue.get()
-        frame, output_batch_idx = data
-        
-        out_stream.write(frame)
-        progress_bar.update(1)
-        if output_batch_idx == 0:
-            out_stream.write(frame)
-            out_stream.write(frame)
-            
-        # when output data's index matches last input's index, we break out of loop 
-        if output_batch_idx == batch_idx:
-            print("breaking out of loop")
+        job_done = _write_to_outstream_from_output_queue()
+        if job_done:
+            print('ENDING THE WHILE LOOP')
             break
+        print('ending of the current iterration of the while loop')
+    
     progress_bar.close()
     
     render_loop_time = time.time() - start_time
