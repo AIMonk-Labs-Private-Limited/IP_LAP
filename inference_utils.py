@@ -13,6 +13,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 from pathlib import Path
 
 from PIL import Image
+import sys
 import shutil
 # from gfpgan import GFPGANer
 # from Fast import FAST_GFGGaner
@@ -662,10 +663,13 @@ def paste_faces_to_input_image(input_img,back_ground_img,restored_face,inverse_a
 # it as a global variable. It can not be defined at the top of file as 
 # define_enhancer() is only defined in middle of the file
 global_gfpgan= define_enhancer(method='gfpgan')
+face_template=np.array([[192.98138, 239.94708], [318.90277, 240.1936], [256.63416, 314.01935],
+                                           [201.26117, 371.41043], [313.08905, 371.15118]])
 
 def face_enhancer_process(input_queue, output_queue, gfpgan_elapsed_time):
     # global global_restorer
     global global_gfpgan
+    global face_template
     print("Face enhancer process ready")
     while True:
         input_data = input_queue.get()
@@ -682,8 +686,6 @@ def face_enhancer_process(input_queue, output_queue, gfpgan_elapsed_time):
         T_input_frame[2][y1:y2, x1:x2] = cv2.resize(gen_face,(x2 - x1, y2 - y1))  #resize and paste generated face
         landmarks_on_large_image=landmarks_to_tori_facecoords(final_lndmrks,shp_,(x2-x1,y2-y1))
         landmarks_on_large_image+=np.array([x1,y1])
-        face_template=np.array([[192.98138, 239.94708], [318.90277, 240.1936], [256.63416, 314.01935],
-                                           [201.26117, 371.41043], [313.08905, 371.15118]])
         affine_matrix=cv2.estimateAffinePartial2D(landmarks_on_large_image,face_template,method=cv2.LMEDS)[0]
         cropped_face=cv2.warpAffine(T_input_frame[2].copy(),affine_matrix,(512,512),borderMode=cv2.BORDER_CONSTANT,borderValue=(135,133,132))
         gen_face_512_t=img2tensor(cropped_face.copy()/255.,bgr2rgb=True,float32=True)
@@ -693,7 +695,7 @@ def face_enhancer_process(input_queue, output_queue, gfpgan_elapsed_time):
         gen_face_numpy=tensor2img(output.squeeze(0), rgb2bgr=True, min_max=(-1, 1))
         gen_face_numpy = gen_face_numpy.astype('uint8')
         inverse_affine = cv2.invertAffineTransform(affine_matrix)
-        inverse_affine *= 1
+        # inverse_affine *= 1
         output_queue.put((T_input_frame,original_background,gen_face_numpy,inverse_affine,avatar_name,input_vid_len,loopth,batch_idx))
         # output_queue.put((frame, batch_idx))
         elapsed_time = time.time() - start_time
@@ -771,16 +773,26 @@ def global_render_loop(input_queue, output_queue, input_mel_chunks_len, mel_chun
             
         # when output data's index matches last input's index, we break out of loop 
         if output_batch_idx == batch_idx:
+            print("breaking out of loop")
             break
-        
     progress_bar.close()
     
     render_loop_time = time.time() - start_time
         
     out_stream.release()
-    shutil.copy('{}/result.avi'.format(temp_dir),"/bv3/debasish_works")
-    command = 'ffmpeg -y -i {} -i {} -b:v 10M -strict -2 -q:v 1 {}'.format(input_audio_path, '{}/result.avi'.format(temp_dir), outfile_path)
-    subprocess.call(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    print('release stream')
+    # shutil.copy('{}/result.avi'.format(temp_dir),"/bv3/debasish_works")
+    command = 'ffmpeg -y -i {} -i {} -b:v 10M -strict -2 -q:v 1 {}'.format(input_audio_path, '{}/result.avi < /dev/null'.format(temp_dir), outfile_path)
+    print("about to run command: ", command)
+    try:
+        retcode = subprocess.call(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        if retcode < 0:
+            print("Child was terminated by signal", -retcode, file=sys.stderr)
+        else:
+            print("Child returned", retcode, file=sys.stderr)
+    except OSError as e:
+            import pdb;pdb.set_trace()
+            print("Execution failed:", e, file=sys.stderr)
     print("succeed output results to:", outfile_path)
     print('{}/result.avi'.format(temp_dir))
     print(input_audio_path)
