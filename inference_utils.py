@@ -342,7 +342,7 @@ def draw_sketches(drawing_spec,lip_dist_idx,input_vid_len,face_crop_results,all_
         mediapipe_format_landmarks = [LandmarkDict(ori_sequence_idx[full_face_landmark_sequence[idx]], full_landmarks[0, idx],
                                                 full_landmarks[1, idx]) for idx in range(full_landmarks.shape[1])]
         drawn_sketech = draw_landmarks(drawn_sketech, mediapipe_format_landmarks, connections=FACEMESH_CONNECTION,
-                                    connection_drawing_spec=drawing_spec,flag=False)
+                                    connection_drawing_spec=drawing_spec,idx_to_coordinates_flag=False)
         drawn_sketech = cv2.resize(drawn_sketech, (img_size, img_size))  # (128, 128, 3)
         ref_img_sketches.append(drawn_sketech)
     ref_img_sketches = torch.FloatTensor(np.asarray(ref_img_sketches) / 255.0).cuda().unsqueeze(0).permute(0, 1, 4, 2, 3)
@@ -373,6 +373,8 @@ def landmarks_to_tori_facecoords(lndmrks,shp,shp_out):
     out=[]
     i=[[133,33],[263,362],4,61,308]
     for indx in i:
+        ## comment:- basically the below code is used to resize the landmarks to the original frame size
+        ## try except is kept to handle, the case when the value from I'th index  is a list or not.
         try:
             resized_point=(int(lndmrks[indx][0]*(shp_out[0]/shp[1])),int(lndmrks[indx][1]*(shp_out[1]/shp[0])))
         except:
@@ -434,6 +436,7 @@ def model_inference_process(input_queue, output_queue,
     print("Model inf process ready")
     while True:
         data = input_queue.get()
+        torch.cuda.synchronize()
         start_time = time.time()
         
         (T_input_frame, T_ori_face_coordinates, T_mel_batch, T_crop_face, T_pose_landmarks, Nl_pose, 
@@ -473,7 +476,7 @@ def model_inference_process(input_queue, output_queue,
                                                     , full_landmarks[0, idx], full_landmarks[1, idx]) for idx in
                                         range(full_landmarks.shape[1])]
             drawn_sketech,lndmrks = draw_landmarks(drawn_sketech, mediapipe_format_landmarks, connections=FACEMESH_CONNECTION,
-                                        connection_drawing_spec=drawing_spec,flag=True)
+                                        connection_drawing_spec=drawing_spec,idx_to_coordinates_flag=True)
             shp=drawn_sketech.shape
             drawn_sketech = cv2.resize(drawn_sketech, (img_size, img_size))  # (128, 128, 3)
             if frame_idx == 2:
@@ -519,7 +522,7 @@ def postprocessing_process(input_queue, output_queue, mp_lock, postproc_elapsed_
     print("post processing process ready")
     while True:
         input_data = input_queue.get()
-        
+        torch.cuda.synchronize()
         start_time = time.time()
         
         # gen_face, T_ori_face_coordinates, T_input_frame, batch_idx = input_data
@@ -645,7 +648,7 @@ def paste_faces_to_input_image(input_img,back_ground_img,restored_face,inverse_a
         upsample_img = np.concatenate((upsample_img, alpha), axis=2)
     else:
         pasted_face=torch.tensor(pasted_face).to(device)
-        print(device)
+        # print(device)
         upsample_img=torch.tensor(upsample_img).to(device)
         upsample_org_back_img=torch.tensor(upsample_org_back_img).to(device)
         upsample_img = inv_soft_mask * pasted_face + (1 - inv_soft_mask) * upsample_org_back_img
@@ -673,6 +676,7 @@ def face_enhancer_process(input_queue, output_queue, gfpgan_elapsed_time):
     print("Face enhancer process ready")
     while True:
         input_data = input_queue.get()
+        torch.cuda.synchronize()
         start_time = time.time()
         # frame, batch_idx = input_data
         gen_face, T_ori_face_coordinates,final_lndmrks,shp_, T_input_frame,avatar_name,input_vid_len,loopth, batch_idx=input_data
@@ -734,8 +738,9 @@ def global_render_loop(input_queue, output_queue, input_mel_chunks_len, mel_chun
 
     start_time = time.time()
     # put inputs into queue
-    input_vid_len=input_vid_len-6
-    
+    if input_vid_len >6:
+        input_vid_len=input_vid_len-6
+    print(input_vid_len)
     for batch_idx, batch_start_idx in enumerate(range(0, total_iterations, 1)):
         T_input_frame, T_ori_face_coordinates = [], []
         T_mel_batch, T_crop_face,T_pose_landmarks = [], [],[]

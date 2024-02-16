@@ -120,7 +120,7 @@ def draw_landmarks(
     connection_drawing_spec: Union[DrawingSpec,
                                    Mapping[Tuple[int, int],
                                            DrawingSpec]] = DrawingSpec(),
-    flag=None):
+    idx_to_coordinates_flag=False):
   """Draws the landmarks and the connections on the image.
 
   Args:
@@ -138,6 +138,7 @@ def draw_landmarks(
       connections' drawing settings such as color and line thickness.
       If this argument is explicitly set to None, no landmark connections will
       be drawn.
+    
 
   Raises:
     ValueError: If one of the followings:
@@ -178,7 +179,7 @@ def draw_landmarks(
         cv2.line(image, idx_to_coordinates[start_idx],
                  idx_to_coordinates[end_idx], drawing_spec.color,
                  drawing_spec.thickness)
-  if flag:
+  if idx_to_coordinates_flag:
     return image,idx_to_coordinates
   else:
     return image
