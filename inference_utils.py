@@ -375,6 +375,7 @@ def landmarks_to_tori_facecoords(lndmrks,shp,shp_out):
     for indx in i:
         ## comment:- basically the below code is used to resize the landmarks to the original frame size
         ## try except is kept to handle, the case when the value from I'th index  is a list or not.
+        ## TODO : Remove try except and use if else
         try:
             resized_point=(int(lndmrks[indx][0]*(shp_out[0]/shp[1])),int(lndmrks[indx][1]*(shp_out[1]/shp[0])))
         except:
