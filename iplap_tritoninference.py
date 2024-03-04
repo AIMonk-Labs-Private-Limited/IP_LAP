@@ -98,7 +98,7 @@ class IPLAP_tritoninference:
         self.face_enhancer_process.start()
         self.postproc_process.start()
     
-    def infer(self,input_video_path,input_audio_path,temp_dir,bgremoval,avatar_name):
+    def infer(self,input_video_path,input_audio_path,temp_dir,bgremoval,avatar_name,modal_flag=True):
 
         # result_out_dir = os.path.dirname(temp_dir)
         t0 = time.time()
@@ -125,12 +125,16 @@ class IPLAP_tritoninference:
         frame_h, frame_w, out_stream, input_mel_chunks_len, input_frame_sequence = prepare_output_stream(
             ori_background_frames, temp_dir, mel_chunks, input_vid_len, fps
         )
-
-        output_path, render_loop_time = global_render_loop(
+        
+        if not modal_flag:
+            start_idx = 0
+            end_idx = input_mel_chunks_len-2
+        
+        output_path, render_loop_time,out_arr = global_render_loop(
             self.input_queue, self.output_queue, input_mel_chunks_len, mel_chunks, 
             input_frame_sequence, face_crop_results, all_pose_landmarks, ori_background_frames,
             frame_w, frame_h, ref_imgs, ref_img_sketches, Nl_content, Nl_pose, 
-            out_stream, input_audio_path, temp_dir, outfile_path,avatar_name,input_vid_len
+            out_stream, input_audio_path, temp_dir, outfile_path,avatar_name,input_vid_len,start_idx,end_idx,modal_flag
         )
 
         timing_dict = {

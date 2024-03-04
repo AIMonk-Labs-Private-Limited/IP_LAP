@@ -36,17 +36,29 @@ model_inf_elapsed_time = 0
 postproc_elapsed_time = 0
 gfpgan_elapsed_time = 0
 
-GFPGAN_CKPT_PATH = os.path.join(
-    # path to the dir that contains checkpoint dir
-    str(Path(os.path.dirname(os.path.abspath(__file__))).parent),
-    "checkpoints","GFPGANv1.4.pth"
-)
-print(GFPGAN_CKPT_PATH)
-PARSENET_CKPT_PATH = os.path.join(
-    # path to the dir that contains checkpoint dir
-    str(Path(os.path.dirname(os.path.abspath(__file__))).parent),
-    "checkpoints","parsing_parsenet.pth"
-)
+# GFPGAN_CKPT_PATH = os.path.join(
+#     # path to the dir that contains checkpoint dir
+#     "/vidgen","checkpoints","GFPGANv1.4.pth"
+# )
+# print(GFPGAN_CKPT_PATH)
+# PARSENET_CKPT_PATH = os.path.join(
+#     # path to the dir that contains checkpoint dir
+#     "/vidgen","checkpoints","parsing_parsenet.pth"
+# )
+print("list files in dir path ",os.path.dirname(os.path.abspath(__file__)))
+print("list files in the root ",os.listdir("/"))
+DIR_PATH=os.path.dirname(os.path.abspath(__file__))
+GFPGAN_CKPT_PATH=os.path.join(Path(DIR_PATH).parent, 'checkpoints',"GFPGANv1.4.pth")
+PARSENET_CKPT_PATH=os.path.join(Path(DIR_PATH).parent, 'checkpoints',"parsing_parsenet.pth")
+# GFPGAN_CKPT_PATH = os.path.join(
+#     # path to the dir that contains checkpoint dir
+#     "/bv3/debasish_works/modal_ai_exp/iplap-modal-multiprocess/IP_LAP/checkpoints/GFPGANv1.4.pth"
+# )
+# print(GFPGAN_CKPT_PATH)
+# PARSENET_CKPT_PATH = os.path.join(
+#     # path to the dir that contains checkpoint dir
+#     "/bv3/debasish_works/modal_ai_exp/iplap-modal-multiprocess/IP_LAP/checkpoints/parsing_parsenet.pth"
+# )
 class LandmarkDict(dict):# Makes a dictionary that behave like an object to represent each landmark
     def __init__(self, idx, x, y):
         self['idx'] = idx
@@ -582,41 +594,42 @@ def paste_faces_to_input_image(input_img,back_ground_img,restored_face,inverse_a
     inv_restored = cv2.warpAffine(restored_face, inverse_affine, (w_up, h_up))
     # os.makedirs("inverse_affine",exist_ok=True)
     # cv2.imwrite(f"inverse_affine/{idx__}.jpg",inv_restored.copy())
-    if not os.path.exists(save_mask_path_file) and loopth==0:
+    # if not os.path.exists(save_mask_path_file) and loopth==0:
         # if not os.path.isdir(save_mask_path):
-        print("Running for first time")
-        face_input = cv2.resize(restored_face, (512, 512), interpolation=cv2.INTER_LINEAR)
-        face_input = img2tensor(face_input.astype('float32') / 255., bgr2rgb=True, float32=True)
-        normalize(face_input, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5), inplace=True)
-        face_input = torch.unsqueeze(face_input, 0).to(device)
-        with torch.no_grad():
-            out = face_parse(face_input)[0]
-        # out = out.argmax(dim=1).squeeze().cpu().numpy()
-        out = out.argmax(dim=1).squeeze()
-        # mask = np.zeros(out.shape)
-        mask = torch.zeros_like(out)
-        MASK_COLORMAP = [0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 255, 0, 0, 0]
-        for idx, color in enumerate(MASK_COLORMAP):
-            mask[out == idx] = color
-            
-        ##save the mask
-        # avatar_name=""
-        os.makedirs(f"saved_mask/{avatar_name}",exist_ok=True)
-        # cv2.imwrite(f"saved_mask/{avatar_name}/{idx__}.jpg",mask.copy())
-        save_image(mask.float(), f"saved_mask/{avatar_name}/{idx__}.jpg")
-        mask=mask.unsqueeze(0).unsqueeze(0).float()
-    else:
-        print("already Ran")
-
-        if loopth%2==0:
-            num=idx__%(input_vid_len)
-        else:
-            num=(input_vid_len - idx__ % (input_vid_len))-1
-        mask = np.asarray(Image.open(f"saved_mask/{avatar_name}/{num}.jpg").convert('L'))
-        mask=torch.tensor(mask).to(device=device).unsqueeze(2)
+    print("Running for first time")
+    face_input = cv2.resize(restored_face, (512, 512), interpolation=cv2.INTER_LINEAR)
+    face_input = img2tensor(face_input.astype('float32') / 255., bgr2rgb=True, float32=True)
+    normalize(face_input, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5), inplace=True)
+    face_input = torch.unsqueeze(face_input, 0).to(device)
+    with torch.no_grad():
+        out = face_parse(face_input)[0]
+    # out = out.argmax(dim=1).squeeze().cpu().numpy()
+    out = out.argmax(dim=1).squeeze()
+    # mask = np.zeros(out.shape)
+    mask = torch.zeros_like(out)
+    MASK_COLORMAP = [0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 255, 0, 0, 0]
+    for idx, color in enumerate(MASK_COLORMAP):
+        mask[out == idx] = color
         
-        mask=mask.permute(2,0,1)
-        mask=mask.unsqueeze(0).float()
+    ##save the mask
+    # avatar_name=""
+    # os.makedirs(f"saved_mask/{avatar_name}",exist_ok=True)
+    # cv2.imwrite(f"saved_mask/{avatar_name}/{idx__}.jpg",mask.copy())
+    # save_image(mask.float(), f"saved_mask/{avatar_name}/{idx__}.jpg")
+    mask=mask.unsqueeze(0).unsqueeze(0).float()
+    # else:
+    #     print("already Ran")
+
+    #     if loopth%2==0:
+    #         num=idx__%(input_vid_len)
+    #     else:
+    #         num=(input_vid_len - idx__ % (input_vid_len))-1
+    #     mask = np.asarray(Image.open(f"saved_mask/{avatar_name}/{num}.jpg").convert('L'))
+    #     mask=torch.tensor(mask).to(device=device).unsqueeze(2)
+        
+    #     mask=mask.permute(2,0,1)
+    #     mask=mask.unsqueeze(0).float()
+        
     gauss = kornia.filters.GaussianBlur2d((101, 101),(11,11))
     mask=gauss(mask)
 
@@ -661,6 +674,7 @@ def paste_faces_to_input_image(input_img,back_ground_img,restored_face,inverse_a
     else:
         upsample_img = upsample_img.astype(np.uint8)
     return upsample_img
+    # return cv2.putText(upsample_img,str(idx__),(50, 50),cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,0),1,cv2.LINE_AA)
 
 
 # this object is defined here so that face_enhancer_process() process can access
@@ -710,13 +724,15 @@ def face_enhancer_process(input_queue, output_queue, gfpgan_elapsed_time):
     
 def global_render_loop(input_queue, output_queue, input_mel_chunks_len, mel_chunks,input_frame_sequence, face_crop_results, 
                        all_pose_landmarks, ori_background_frames,frame_w, frame_h, ref_imgs, ref_img_sketches, Nl_content, 
-                       Nl_pose, out_stream, input_audio_path, temp_dir, outfile_path,avatar_name,input_vid_len):
+                       Nl_pose, out_stream, input_audio_path, temp_dir, outfile_path,avatar_name,input_vid_len,start_idx,end_idx,modal_flag=True):
     # torch tensor: ref_imgs, ref_img_sketches, Nl_content, Nl_pose
+    out_arr=[]
     def _write_to_outstream_from_output_queue():
         data = output_queue.get()
         frame, output_batch_idx = data
         # print(f'output_batch_idx: ', output_batch_idx, ' batch_idx: ', batch_idx)
-        
+        if modal_flag:
+            out_arr.append(frame)
         out_stream.write(frame)
         progress_bar.update(1)
         if output_batch_idx == 0:
@@ -734,7 +750,9 @@ def global_render_loop(input_queue, output_queue, input_mel_chunks_len, mel_chun
     Nl_content = Nl_content.share_memory_()
     Nl_pose = Nl_pose.share_memory_()
     
-    total_iterations = input_mel_chunks_len - 2
+    # total_iterations = input_mel_chunks_len - 2
+    # progress_bar = tqdm(total=total_iterations, desc="Processing")
+    total_iterations = end_idx-start_idx
     progress_bar = tqdm(total=total_iterations, desc="Processing")
 
     start_time = time.time()
@@ -742,10 +760,13 @@ def global_render_loop(input_queue, output_queue, input_mel_chunks_len, mel_chun
     if input_vid_len >6:
         input_vid_len=input_vid_len-6
     print(input_vid_len)
-    for batch_idx, batch_start_idx in enumerate(range(0, total_iterations, 1)):
+    
+    # for batch_idx, batch_start_idx in enumerate(range(0, total_iterations, 1)):
+    for batch_idx, batch_start_idx in enumerate(range(start_idx, end_idx, 1)):
+        print("batch_idx: ", batch_idx, " batch_start_idx: ", batch_start_idx)
         T_input_frame, T_ori_face_coordinates = [], []
         T_mel_batch, T_crop_face,T_pose_landmarks = [], [],[]
-        loopth=(batch_idx)//input_vid_len
+        loopth=(batch_start_idx)//input_vid_len
         for mel_chunk_idx in range(batch_start_idx, batch_start_idx + T):  # for each T frame
             # 1 input audio
             T_mel_batch.append(mel_chunks[max(0, mel_chunk_idx - 2)])
@@ -787,20 +808,22 @@ def global_render_loop(input_queue, output_queue, input_mel_chunks_len, mel_chun
         
     out_stream.release()
     print('release stream')
-    # shutil.copy('{}/result.avi'.format(temp_dir),"/bv3/debasish_works")
-    command = 'ffmpeg -y -i {} -i {} -b:v 10M -strict -2 -q:v 1 {}'.format(input_audio_path, '{}/result.avi < /dev/null'.format(temp_dir), outfile_path)
-    print("about to run command: ", command)
-    try:
-        retcode = subprocess.call(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        if retcode < 0:
-            print("Child was terminated by signal", -retcode, file=sys.stderr)
-        else:
-            print("Child returned", retcode, file=sys.stderr)
-    except OSError as e:
-            import pdb;pdb.set_trace()
-            print("Execution failed:", e, file=sys.stderr)
+    if not modal_flag:
+        command = 'ffmpeg -y -i {} -i {} -b:v 10M -strict -2 -q:v 1 {}'.format(input_audio_path, '{}/result.avi < /dev/null'.format(temp_dir), outfile_path)
+        print("about to run command: ", command)
+        try:
+            retcode = subprocess.call(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            if retcode < 0:
+                print("Child was terminated by signal", -retcode, file=sys.stderr)
+            else:
+                print("Child returned", retcode, file=sys.stderr)
+        except OSError as e:
+                import pdb;pdb.set_trace()
+                print("Execution failed:", e, file=sys.stderr)
+                
     print("succeed output results to:", outfile_path)
     print('{}/result.avi'.format(temp_dir))
     print(input_audio_path)
-    return outfile_path, render_loop_time
-
+    return outfile_path, render_loop_time,out_arr
+    
+  
