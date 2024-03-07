@@ -1,8 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-from IP_LAP.bgremoval_package.src.models.backbones import SUPPORTED_BACKBONES
+try:
+    from IP_LAP.bgremoval_package.src.models.backbones import SUPPORTED_BACKBONES
+except:
+    from bgremoval_package.src.models.backbones import SUPPORTED_BACKBONES
 
 
 #------------------------------------------------------------------------------

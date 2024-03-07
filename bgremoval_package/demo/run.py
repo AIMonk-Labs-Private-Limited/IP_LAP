@@ -9,7 +9,14 @@ import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
 from pathlib import Path
-from IP_LAP.bgremoval_package.src.models.modnet import MODNet
+try:
+    from IP_LAP.bgremoval_package.src.models.modnet import MODNet
+except:
+    # import sys
+    # print(os.path.join(os.path.dirname(__file__),".."))
+    # sys.path.append("")
+    from bgremoval_package.src.models.modnet import MODNet
+    
 
 
 #Check if GPU available or not
@@ -94,23 +101,41 @@ def matting_list(video,output_folder):
         cv2.imwrite(output_path, four_channel_frame)
 
 
-def matting(video,output_folder,modnet, alpha_matte=False, fps=25):
+def matting(video,output_folder,modnet, alpha_matte=False, fps=25,MODAL_FLAG=False):
     # video capture
     # modnet = load_model()
-    vc = cv2.VideoCapture(video)
+    modal_matt_arr=[]
+    if not MODAL_FLAG:
+        vc = cv2.VideoCapture(video)
+        if vc.isOpened():
+            rval, frame = vc.read()
+        else:
+            rval = False
+        if not rval:
+            print('Failed to read the video: {0}'.format(video))
+            exit()
+        
+        
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
-    if vc.isOpened():
-        rval, frame = vc.read()
+        
+    # if not MODAL_FLAG:
+    #     if vc.isOpened():
+    #         rval, frame = vc.read()
+    #     else:
+    #         rval = False
+
+    # if not rval:
+    #     print('Failed to read the video: {0}'.format(video))
+    #     exit()
+    if not MODAL_FLAG:
+        num_frame = vc.get(cv2.CAP_PROP_FRAME_COUNT)
+        h, w = frame.shape[:2]
     else:
-        rval = False
-
-    if not rval:
-        print('Failed to read the video: {0}'.format(video))
-        exit()
-
-    num_frame = vc.get(cv2.CAP_PROP_FRAME_COUNT)
-    h, w = frame.shape[:2]
+        num_frame = len(video)
+        
+        h, w = video[0].shape[:2]
+    
     if w >= h:
         rh = 512
         rw = int(w / h * 512)
@@ -129,6 +154,8 @@ def matting(video,output_folder,modnet, alpha_matte=False, fps=25):
     print('Start matting...')
     with tqdm(range(int(num_frame)))as t:
         for c in t:
+            if MODAL_FLAG:
+                frame=video[c]
             frame_np = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frame_np = cv2.resize(frame_np, (rw, rh), cv2.INTER_AREA)
 
@@ -155,11 +182,14 @@ def matting(video,output_folder,modnet, alpha_matte=False, fps=25):
             view_np_alpha=view_np_alpha[:,:,1]
             four_channel_frame = np.dstack((view_np, view_np_alpha))
             output_path = os.path.join(output_folder, f'output_{c:04d}.png')
-            cv2.imwrite(output_path, four_channel_frame)
-
-
-            rval, frame = vc.read()
+            if not MODAL_FLAG:
+                cv2.imwrite(output_path, four_channel_frame)
+                rval, frame = vc.read()
+            else:
+                modal_matt_arr.append(four_channel_frame)
+                
             c += 1
+    return modal_matt_arr
 
     # video_writer.release()
     # video_alpha_writer.release()
