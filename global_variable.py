@@ -64,3 +64,4 @@ full_face_landmark_sequence = [*list(range(0, 4)), *list(range(21, 25)), *list(r
                             *list(range(4, 21)),  # jaw
                             *list(range(91, 131))]  # mouth
 
+AUDIO_THRESHOLD_SECONDS=40 ## used in while deciding when the pipeline would run the iplap tasks in local or using MODAL API
