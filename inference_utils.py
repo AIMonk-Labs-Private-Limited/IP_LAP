@@ -72,6 +72,22 @@ class LandmarkDict(dict):# Makes a dictionary that behave like an object to repr
     def __setattr__(self, name, value):
         self[name] = value
 
+def tensor2img_fast(tensor, rgb2bgr=True, min_max=(0, 1)):
+    """This implementation is slightly faster than tensor2img.
+    It now only supports torch tensor with shape (1, c, h, w).
+
+    Args:
+        tensor (Tensor): Now only support torch tensor with (1, c, h, w).
+        rgb2bgr (bool): Whether to change rgb to bgr. Default: True.
+        min_max (tuple[int]): min and max values for clamp.
+    """
+    output = tensor.squeeze(0).detach().clamp_(*min_max).permute(1, 2, 0)
+    output = (output - min_max[0]) / (min_max[1] - min_max[0]) * 255
+    output = output.type(torch.uint8).cpu().numpy()
+    if rgb2bgr:
+        output = cv2.cvtColor(output, cv2.COLOR_RGB2BGR)
+    return output
+
 
 def summarize_landmark(edge_set):  # summarize all ficial landmarks used to construct edge
     landmarks = set()
@@ -720,7 +736,7 @@ def face_enhancer_process(input_queue, output_queue, gfpgan_elapsed_time):
         normalize(gen_face_512_t,(0.5,0.5,0.5),(0.5,0.5,0.5),inplace=True)
         gen_face_512_t=gen_face_512_t.unsqueeze(0).to(device=device)
         output = global_gfpgan(gen_face_512_t, return_rgb=False, weight=0.5)[0]
-        gen_face_numpy=tensor2img(output.squeeze(0), rgb2bgr=True, min_max=(-1, 1))
+        gen_face_numpy=tensor2img_fast(output.squeeze(0), rgb2bgr=True, min_max=(-1, 1))
         gen_face_numpy = gen_face_numpy.astype('uint8')
         inverse_affine = cv2.invertAffineTransform(affine_matrix)
         # inverse_affine *= 1
