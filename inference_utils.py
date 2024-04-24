@@ -834,7 +834,7 @@ def global_render_loop(input_queue, output_queue, input_mel_chunks_len, mel_chun
     out_stream.release()
     print('release stream')
     if not modal_flag:
-        command = 'ffmpeg -y -i {} -i {} -b:v 10M -strict -2 -q:v 1 {}'.format(input_audio_path, '{}/result.avi < /dev/null'.format(temp_dir), outfile_path)
+        command = 'ffmpeg -y -i "{}" -i {} -b:v 10M -strict -2 -q:v 1 {}'.format(input_audio_path, '{}/result.avi < /dev/null'.format(temp_dir), outfile_path)
         print("about to run command: ", command)
         try:
             retcode = subprocess.call(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
